@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 #[cfg(feature = "image-rendering")] use std::path::PathBuf;
 
 #[cfg(feature = "text-rendering")]
@@ -35,6 +35,7 @@ use meralus_shared::{Color, Point2D, Point3D, Transform3D};
 use meralus_shared::{ConvertFrom, IntConversionError};
 #[cfg(feature = "shape-rendering")]
 use meralus_shared::{RRect2D, Rect2D, Size2D, Thickness, Vector2D};
+use swash::CacheKey;
 
 use super::Shader;
 use crate::{BLENDING, RenderInfo, VertexBuffers, impl_vertex};
@@ -343,7 +344,7 @@ pub struct CommonRenderer {
     #[cfg(feature = "text-rendering")]
     font_name_map: HashMap<String, usize>,
     #[cfg(feature = "text-rendering")]
-    fonts: Vec<Font>,
+    fonts: Vec<OwnedFont>,
 
     // COMMON RENDERING
     pub(crate) buffers: VertexBuffers<CommonVertex, u32>,
@@ -353,6 +354,19 @@ pub struct CommonRenderer {
 
     matrix: Option<Transform3D>,
     window_matrix: Transform3D,
+}
+
+struct OwnedFont {
+    data: Vec<u8>,
+    font: Font,
+    offset: u32,
+    key: CacheKey,
+}
+
+impl Borrow<Font> for OwnedFont {
+    fn borrow(&self) -> &Font {
+        &self.font
+    }
 }
 
 #[cfg(feature = "image-rendering")]
@@ -415,7 +429,7 @@ impl CommonRenderer {
     }
 
     #[cfg(feature = "text-rendering")]
-    pub fn fonts(&self) -> &[Font] {
+    pub fn fonts(&self) -> &[OwnedFont] {
         &self.fonts
     }
 
@@ -450,9 +464,18 @@ impl CommonRenderer {
     #[cfg(feature = "text-rendering")]
     pub fn add_font<T: Into<String>>(&mut self, name: T, data: &[u8]) {
         if let Ok(font) = Font::from_bytes(data, FontSettings::default()) {
+            use swash::FontRef;
+
+            let font_info = FontRef::from_index(data, 0).unwrap();
+
             self.font_name_map.insert(name.into(), self.fonts.len());
 
-            self.fonts.push(font);
+            self.fonts.push(OwnedFont {
+                data: font_info.data.to_vec(),
+                font,
+                offset: font_info.offset,
+                key: font_info.key,
+            });
         }
     }
 
@@ -827,13 +850,13 @@ impl CommonRenderer {
 
         let buffers = self.tessellator.build();
 
-        self.buffers.vertices.extend(buffers.vertices.into_iter().map(|mut vertice| {
-            vertice.position = self
+        self.buffers.vertices.extend(buffers.vertices.into_iter().map(|mut vertex| {
+            vertex.position = self
                 .transform
                 .as_ref()
-                .map_or(vertice.position, |transform| transform.transform_point3(vertice.position));
+                .map_or(vertex.position, |transform| transform.transform_point3(vertex.position));
 
-            vertice
+            vertex
         }));
 
         self.buffers.indices.extend(buffers.indices);
@@ -851,73 +874,96 @@ impl CommonRenderer {
         font_size: f32,
         max_width: Option<f32>,
     ) -> Result<(), IntConversionError> {
+        use swash::{FontRef, scale::ScaleContext};
+
+        self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
+
         if let Some(font_index) = self.font_name_map.get(font.as_ref()).copied() {
+            use swash::shape::ShapeContext;
+
             let text = text.as_ref();
 
             self.layout.clear();
             self.layout.set_max_width(max_width);
             self.layout.append(&self.fonts, &TextStyle::new(text, font_size, font_index));
 
-            let font = &self.fonts[font_index];
+            let OwnedFont { data, offset, key, .. } = &self.fonts[font_index];
+            let font_ref = FontRef {
+                data,
+                offset: *offset,
+                key: *key,
+            };
 
-            for glyph in self.layout.glyphs() {
-                if glyph.width == 0 || glyph.height == 0 {
-                    continue;
-                }
+            let mut shape_context = ShapeContext::new();
+            let mut scale_context = ScaleContext::new();
+            let mut scaler = scale_context.builder(font_ref).hint(true).size(font_size).build();
+            let mut shaper = shape_context.builder(font_ref).size(font_size).build();
+            let metrics = font_ref.glyph_metrics(&[]).scale(font_size);
 
-                let key = AtlasKey::Text(Some(glyph.key));
+            shaper.add_str(text);
 
-                let (offset, size) = if let Some((offset, size, _)) = self.atlas.get_texture_uv(&key) {
-                    (offset, size)
-                } else {
-                    let (metrics, bitmap) = font.rasterize_config(glyph.key);
+            self.tessellator
+                .tessellate_with_color(color, |b| {
+                    let mut x = origin.x;
+                    let mut y = origin.y + font_size;
 
-                    let mut image = ImageBuffer::from_pixel(metrics.width.convert()?, metrics.height.convert()?, image::Rgba([0, 0, 0, 255]));
-                    let (width, height) = image.dimensions();
+                    shaper.shape_with(|cluster| {
+                        use swash::text::cluster::Whitespace;
 
-                    for (pixel, alpha) in image.pixels_mut().zip(bitmap) {
-                        *pixel = image::Rgba([255, 255, 255, alpha]);
-                    }
+                        if matches!(cluster.info.whitespace(), Whitespace::Newline) {
+                            x = origin.x;
+                            y += font_size;
+                        }
 
-                    let (offset, size, _) = self.atlas.append(key, &image);
+                        for glyph in cluster.glyphs {
+                            if let Some(mut outline) = scaler.scale_outline(glyph.id) {
+                                use swash::zeno::{PathData, Transform};
 
-                    self.texture.write(
-                        Rect {
-                            left: (offset.x * 4096.0).convert()?,
-                            bottom: (offset.y * 4096.0).convert()?,
-                            width: (size.x * 4096.0).convert()?,
-                            height: (size.y * 4096.0).convert()?,
-                        },
-                        RawImage2d {
-                            data: Cow::Owned(image.into_raw()),
-                            width,
-                            height,
-                            format: ClientFormat::U8U8U8U8,
-                        },
-                    );
+                                outline.transform(&Transform::scale(1.0, -1.0).then_translate(x, y));
 
-                    (offset, size)
-                };
+                                for command in outline.path().commands() {
+                                    match command {
+                                        swash::zeno::Command::MoveTo(vector) => {
+                                            b.begin(euclid::Point2D::new(vector.x, vector.y));
+                                        }
+                                        swash::zeno::Command::LineTo(vector) => {
+                                            b.line_to(euclid::Point2D::new(vector.x, vector.y));
+                                        }
+                                        swash::zeno::Command::CurveTo(vector, vector1, vector2) => {
+                                            b.cubic_bezier_to(
+                                                euclid::Point2D::new(vector.x, vector.y),
+                                                euclid::Point2D::new(vector1.x, vector1.y),
+                                                euclid::Point2D::new(vector2.x, vector2.y),
+                                            );
+                                        }
+                                        swash::zeno::Command::QuadTo(vector, vector1) => {
+                                            b.quadratic_bezier_to(euclid::Point2D::new(vector.x, vector.y), euclid::Point2D::new(vector1.x, vector1.y));
+                                        }
+                                        swash::zeno::Command::Close => {
+                                            b.close();
+                                        }
+                                    }
+                                }
+                            }
 
-                self.buffers.vertices.extend(TEXT_BASE_VERTICES.map(|(position, uv)| {
-                    let mut position =
-                        (origin + Point2D::new(glyph.x, glyph.y) + Point2D::new(position.x * size.x * 4096.0, position.y * size.y * 4096.0)).extend(position.z);
+                            x += cluster.advance();
+                        }
+                    });
+                })
+                .unwrap();
 
-                    if let Some(transform) = &self.transform {
-                        position = transform.transform_point3(position);
-                    }
+            let buffers = self.tessellator.build();
 
-                    CommonVertex {
-                        position,
-                        color,
-                        uv: offset + Point2D::new(uv.x * size.x, uv.y * size.y),
-                    }
-                }));
+            self.buffers.vertices.extend(buffers.vertices.into_iter().map(|mut vertex| {
+                vertex.position = self
+                    .transform
+                    .as_ref()
+                    .map_or(vertex.position, |transform| transform.transform_point3(vertex.position));
 
-                self.buffers
-                    .indices
-                    .extend([0, 1, 2, 3, 2, 1].map(|index| (self.buffers.vertices.len() - TEXT_BASE_VERTICES.len()) as u32 + index));
-            }
+                vertex
+            }));
+
+            self.buffers.indices.extend(buffers.indices);
         }
 
         Ok(())

@@ -28,7 +28,7 @@ pub struct Inventory {
 impl Inventory {
     pub const HOTBAR_ROW: usize = 4;
     pub const MAX_ITEM_AMOUNT: usize = 64;
-    pub const MAX_SLOT_COLUMNS: usize = 10;
+    pub const MAX_SLOT_COLUMNS: usize = 9;
     pub const MAX_SLOT_ROWS: usize = 5;
 
     pub fn is_hotbar_filled(&self) -> bool {

@@ -199,3 +199,105 @@ impl Block for TechTestBlock {
         vec![]
     }
 }
+
+#[allow(dead_code)]
+pub struct RoseBlock;
+
+impl Block for RoseBlock {
+    fn id(&self) -> &'static str {
+        "rose"
+    }
+
+    fn blocks_light(&self) -> bool {
+        false
+    }
+
+    fn collidable(&self) -> bool {
+        false
+    }
+
+    fn cull_if_same(&self) -> bool {
+        false
+    }
+
+    fn get_properties(&self) -> Vec<Property> {
+        vec![]
+    }
+}
+
+#[allow(dead_code)]
+pub struct BlueRoseBlock;
+
+impl Block for BlueRoseBlock {
+    fn id(&self) -> &'static str {
+        "blue_rose"
+    }
+
+    fn blocks_light(&self) -> bool {
+        false
+    }
+
+    fn collidable(&self) -> bool {
+        false
+    }
+
+    fn cull_if_same(&self) -> bool {
+        false
+    }
+
+    fn get_properties(&self) -> Vec<Property> {
+        vec![]
+    }
+}
+
+#[allow(dead_code)]
+pub struct CobbleStoneBlock;
+
+impl Block for CobbleStoneBlock {
+    fn id(&self) -> &'static str {
+        "cobblestone"
+    }
+
+    fn get_properties(&self) -> Vec<Property> {
+        vec![]
+    }
+}
+
+#[allow(dead_code)]
+pub struct BricksBlock;
+
+impl Block for BricksBlock {
+    fn id(&self) -> &'static str {
+        "bricks"
+    }
+
+    fn get_properties(&self) -> Vec<Property> {
+        vec![]
+    }
+}
+
+#[allow(dead_code)]
+pub struct StoneBricksBlock;
+
+impl Block for StoneBricksBlock {
+    fn id(&self) -> &'static str {
+        "stone_bricks"
+    }
+
+    fn get_properties(&self) -> Vec<Property> {
+        vec![]
+    }
+}
+
+#[allow(dead_code)]
+pub struct DebugBlock;
+
+impl Block for DebugBlock {
+    fn id(&self) -> &'static str {
+        "debug"
+    }
+
+    fn get_properties(&self) -> Vec<Property> {
+        vec![]
+    }
+}

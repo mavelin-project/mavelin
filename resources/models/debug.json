@@ -1,0 +1,44 @@
+{
+  "$schema": "../../schemas/model.json",
+  "textures": {
+    "#all": "game:debug"
+  },
+  "elements": [
+    {
+      "start": [0, 0, 0],
+      "end": [1, 1, 1],
+      "faces": {
+        "bottom": {
+          "texture": "#all",
+          "cull_face": "bottom",
+          "uv": [[0, 32], [16, 48]]
+        },
+        "top": {
+          "texture": "#all",
+          "cull_face": "top",
+          "uv": [[16, 32], [32, 48]]
+        },
+        "front": {
+          "texture": "#all",
+          "cull_face": "front",
+          "uv": [[0, 48], [16, 64]]
+        },
+        "back": {
+          "texture": "#all",
+          "cull_face": "back",
+          "uv": [[48, 48], [64, 64]]
+        },
+        "left": {
+          "texture": "#all",
+          "cull_face": "left",
+          "uv": [[32, 48], [48, 64]]
+        },
+        "right": {
+          "texture": "#all",
+          "cull_face": "right",
+          "uv": [[16, 48], [32, 64]]
+        }
+      }
+    }
+  ]
+}

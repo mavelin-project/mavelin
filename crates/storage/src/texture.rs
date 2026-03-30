@@ -1,16 +1,12 @@
 use core::fmt;
-use std::{
-    io,
-    path::Path,
-};
+use std::{io, path::Path};
 
 use image::RgbaImage;
 use meck::TextureAtlas;
 use meralus_shared::{Point2D, USize2D, Vector2D};
 use tracing::info;
 
-use crate::LoadingError;
-use crate::LoadingResult;
+use crate::{LoadingError, LoadingResult};
 
 pub struct TextureStorage {
     regular_atlas: TextureAtlas<String>,
@@ -130,8 +126,6 @@ impl TextureStorage {
     pub fn load<P: AsRef<Path>>(&mut self, path: P) -> LoadingResult<Option<USize2D>> {
         let path = path.as_ref();
 
-        info!(target: "texture-loader", "Loading texture at {}", path.display());
-
         let name = path.file_stem().ok_or(LoadingError::Texture(TextureLoadingError::InvalidPath))?;
         let name = name.to_string_lossy();
         let name = name.to_string();
@@ -144,6 +138,8 @@ impl TextureStorage {
             Ok(value) => match value.decode() {
                 Ok(value) => {
                     let image = value.to_rgba8();
+
+                    info!(target: "texture-loader", width = image.width(), height = image.height(), "Loaded texture at {}", path.display());
 
                     Ok(Some(self.regular_atlas.special_append(name, &image)))
                 }

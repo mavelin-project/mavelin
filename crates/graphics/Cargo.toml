@@ -28,6 +28,7 @@ bytemuck = "1.25.0"
 euclid = { version = "0.22.13", features = ["bytemuck"] }
 polymorpher = { git = "https://github.com/Aiving/polymorpher.git", optional = true }
 indexmap = "2.13.0"
+swash = { version = "0.2.7", features = ["scale", "std"], default-features = false }
 
 [lints]
 workspace = true

@@ -1,0 +1,7 @@
+{
+  "$schema": "../../schemas/model.json",
+  "parent": "game:base_rose",
+  "textures": {
+    "#main": "game:rose"
+  }
+}

@@ -42,7 +42,10 @@ use meralus_storage::{Block, ResourceStorage, TextureStorage};
 use meralus_world::{BfsLight, BlockSource, Chunk, ChunkManager, LightNode, SUBCHUNK_COUNT, SUBCHUNK_SIZE};
 
 use crate::{
-    blocks::{AirBlock, DirtBlock, GrassBlock, GreenGlassBlock, IceBlock, OakLeavesBlock, SandBlock, SnowBlock, StoneBlock, TorchBlock, WaterBlock, WoodBlock},
+    blocks::{
+        AirBlock, BlueRoseBlock, BricksBlock, CobbleStoneBlock, DebugBlock, DirtBlock, GrassBlock, GreenGlassBlock, IceBlock, OakLeavesBlock, RoseBlock,
+        SandBlock, SnowBlock, StoneBlock, StoneBricksBlock, TorchBlock, WaterBlock, WoodBlock,
+    },
     camera::Camera,
     input::Input,
     player::{Item, ItemType, PlayerController},
@@ -106,8 +109,8 @@ impl Default for Debugging {
             inventory_open: false,
             chunk_borders: Vec::new(),
             render_info: RenderInfo::default(),
-            item_rotation_x: 200.0f32.to_radians(),
-            item_rotation_y: 35.0f32.to_radians(),
+            item_rotation_x: 200f32.to_radians(),
+            item_rotation_y: 35f32.to_radians(),
             item_rotation_z: 0.0,
         }
     }
@@ -118,7 +121,8 @@ enum Action {
     #[allow(dead_code)]
     RemoveBlock(IPoint2D, USizePoint3D),
     ReplaceResourceManager(ResourceStorage),
-    // ReplaceCompiler(Compiler),
+    #[cfg(feature = "addons")]
+    ReplaceAddonManager(meralus_addons::AddonManager),
     // ReplaceEventManager(EventManager),
 }
 
@@ -160,6 +164,9 @@ struct GameLoop {
 
     action_sender: mpsc::Sender<Action>,
     action_receiver: mpsc::Receiver<Action>,
+
+    #[cfg(feature = "addons")]
+    addons: meralus_addons::AddonManager,
 
     accel: Duration,
     fixed_interval: Interval,
@@ -295,10 +302,15 @@ impl State for GameLoop {
 
             let sender = ProgressSender(tx);
 
-            sender.set_visible(true)?;
-            sender.set_initial_info(ProgressInfo::new(3, 0, 1, 0))?;
+            #[cfg(not(feature = "addons"))]
+            let total_stages = 2;
+            #[cfg(feature = "addons")]
+            let total_stages = 3;
 
-            sender.new_stage("Blocks loading", 13)?;
+            sender.set_visible(true)?;
+            sender.set_initial_info(ProgressInfo::new(total_stages, 0, 1, 0))?;
+
+            sender.new_stage("Blocks loading", 19)?;
 
             resources.load_entity_model("game", "player");
             resources.load_entity_model("game", "floating");
@@ -315,11 +327,30 @@ impl State for GameLoop {
             register_block(&mut resources, &sender, GreenGlassBlock)?;
             register_block(&mut resources, &sender, TorchBlock)?;
             register_block(&mut resources, &sender, SnowBlock)?;
+            register_block(&mut resources, &sender, RoseBlock)?;
+            register_block(&mut resources, &sender, BlueRoseBlock)?;
+            register_block(&mut resources, &sender, CobbleStoneBlock)?;
+            register_block(&mut resources, &sender, BricksBlock)?;
+            register_block(&mut resources, &sender, StoneBricksBlock)?;
+            register_block(&mut resources, &sender, DebugBlock)?;
+
+            #[cfg(feature = "addons")]
+            {
+                sender.new_stage("Loading addons", 1);
+
+                let mut addons = meralus_addons::AddonManager::new("./addons").unwrap();
+
+                addons.insert_mappings(&mut resources);
+                addons.execute(&mut resources);
+
+                _ = action_sender_clone.send(Action::ReplaceAddonManager(addons));
+            }
 
             sender.new_stage("Mip-maps generation", 4)?;
 
             for level in 1..=4 {
                 resources.generate_mipmap(level);
+
                 sender.complete_task()?;
             }
 
@@ -354,6 +385,8 @@ impl State for GameLoop {
             current_page: Page::Main,
             debugging: Debugging::default(),
             resource_manager,
+            #[cfg(feature = "addons")]
+            addons: meralus_addons::AddonManager::new("./addons").unwrap(),
             accel: Duration::ZERO,
             fixed_interval: Interval::new(FIXED_FRAMERATE),
             action_sender,
@@ -547,6 +580,10 @@ impl State for GameLoop {
             }
         }
 
+        if self.input.keyboard.is_key_pressed_once(KeyCode::KeyL) {
+            self.resource_manager.debug_save();
+        }
+
         if self.input.keyboard.is_key_pressed_once(KeyCode::Tab) {
             if let Some(world) = self.world.as_mut() {
                 world.player_controllable = !world.player_controllable;
@@ -620,15 +657,15 @@ impl State for GameLoop {
         }
 
         if self.input.keyboard.is_key_pressed_once(KeyCode::KeyX) {
-            self.debugging.item_rotation_x += const { 1.0f32.to_radians() };
+            self.debugging.item_rotation_x += const { 1f32.to_radians() };
         }
 
         if self.input.keyboard.is_key_pressed_once(KeyCode::KeyY) {
-            self.debugging.item_rotation_y += const { 1.0f32.to_radians() };
+            self.debugging.item_rotation_y += const { 1f32.to_radians() };
         }
 
         if self.input.keyboard.is_key_pressed_once(KeyCode::KeyZ) {
-            self.debugging.item_rotation_z += const { 1.0f32.to_radians() };
+            self.debugging.item_rotation_z += const { 1f32.to_radians() };
         }
 
         if self.input.keyboard.is_key_pressed_once(KeyCode::KeyP) {
@@ -684,7 +721,8 @@ impl State for GameLoop {
                     }
                 }
                 Action::ReplaceResourceManager(manager) => self.resource_manager = Arc::new(manager),
-                // Action::ReplaceCompiler(compiler) => self.compiler = compiler,
+                #[cfg(feature = "addons")]
+                Action::ReplaceAddonManager(addons) => self.addons = addons,
                 // Action::ReplaceEventManager(manager) => self.event_manager = manager,
             }
         }
@@ -1152,13 +1190,13 @@ Rendered vertices: {vertices}",
                     });
 
                     world.player.inventory.try_insert(Item {
-                        id: self.resource_manager.get_block_id("oak_leaves") as usize,
+                        id: self.resource_manager.get_block_id("cobblestone") as usize,
                         ty: ItemType::Block,
                         amount: 64,
                     });
 
                     world.player.inventory.try_insert(Item {
-                        id: self.resource_manager.get_block_id("ice") as usize,
+                        id: self.resource_manager.get_block_id("bricks") as usize,
                         ty: ItemType::Block,
                         amount: 64,
                     });
@@ -1176,16 +1214,29 @@ Rendered vertices: {vertices}",
                     });
 
                     world.player.inventory.try_insert(Item {
-                        id: self.resource_manager.get_block_id("snow") as usize,
+                        id: self.resource_manager.get_block_id("stone_bricks") as usize,
                         ty: ItemType::Block,
                         amount: 64,
                     });
 
-                    // world.player.inventory.try_insert(Item {
-                    //     id: self.resource_manager.get_block_id("tech_test") as usize,
-                    //     ty: ItemType::Block,
-                    //     amount: 64,
-                    // });
+                    world.player.inventory.try_insert(Item {
+                        id: self.resource_manager.get_block_id("blue_rose") as usize,
+                        ty: ItemType::Block,
+                        amount: 16,
+                    });
+
+                    world.player.inventory.try_insert(Item {
+                        id: self.resource_manager.get_block_id("debug") as usize,
+                        ty: ItemType::Block,
+                        amount: 1,
+                    });
+
+                    #[cfg(feature = "addons")]
+                    world.player.inventory.try_insert(Item {
+                        id: self.resource_manager.get_block_id("tech_test") as usize,
+                        ty: ItemType::Block,
+                        amount: 64,
+                    });
 
                     world.entities.spawn_model(Point3D::new(0.0, 128.0, 0.0), 0);
                     world.entities.spawn_model(Point3D::new(32.0, 128.0, 0.0), 1);
@@ -1321,6 +1372,15 @@ impl MainPage {
                 .measure_text("default", "Meralus", 72.0, None)
                 .unwrap_or_else(|| panic!("failed to measure next text: Meralus"));
             let offset = Point2D::new(bounds.size.width / 2.0 - size.width / 2.0, 24.0);
+
+            context.draw_text(
+                bounds.origin,
+                "default",
+                "Meralus",
+                (72.0 * (bounds.size.width / size.width)).round(),
+                Color::from_hsl(110.0, 0.4, 0.7).with_alpha(text_opacity),
+                None,
+            );
 
             context.draw_text(
                 bounds.origin + offset,
@@ -1695,7 +1755,13 @@ impl AabbSource for LimitedAabbProvider<'_> {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::util::SubscriberInitExt::init(tracing_subscriber::layer::SubscriberExt::with(
+        tracing_subscriber::registry(),
+        tracing_subscriber::Layer::with_filter(
+            tracing_subscriber::Layer::with_filter(tracing_subscriber::fmt::layer(), tracing_subscriber::filter::LevelFilter::INFO),
+            tracing_subscriber::filter::filter_fn(|metadata| !(metadata.target() == "cranelift_jit::backend" && metadata.level() == &tracing::Level::INFO)),
+        ),
+    ));
 
     // let args = Args::parse();
 

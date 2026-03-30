@@ -261,8 +261,8 @@ pub struct Camera {
 
 impl Camera {
     pub fn default() -> Self {
-        let yaw = 0.0f32;
-        let pitch = 0.0f32;
+        let yaw = 0f32;
+        let pitch = 0f32;
 
         let front = Vector3D::new(yaw.cos() * pitch.cos(), pitch.sin(), yaw.sin() * pitch.cos()).normalize();
 

@@ -2,9 +2,9 @@
 
 // use ahash::{HashMap, HashMapExt};
 // use glam::{IVec2, USizeVec3, Vec3};
-// use meralus_shared::{IncomingPacket, OutgoingPacket, Player, ServerConnection};
-// use meralus_world::{BfsLight, Chunk, ChunkGenerator, ChunkManager, LightNode, SUBCHUNK_SIZE};
-// use tokio::{
+// use meralus_shared::{IncomingPacket, OutgoingPacket, Player,
+// ServerConnection}; use meralus_world::{BfsLight, Chunk, ChunkGenerator,
+// ChunkManager, LightNode, SUBCHUNK_SIZE}; use tokio::{
 //     fs,
 //     net::TcpListener,
 //     sync::{
@@ -30,7 +30,8 @@
 //         let mut blocking_save = false;
 
 //         for chunk in chunks.chunks_mut() {
-//             let path = std::path::PathBuf::from(format!("world/{}_{}.bin", chunk.origin.x, chunk.origin.y));
+//             let path = std::path::PathBuf::from(format!("world/{}_{}.bin",
+// chunk.origin.x, chunk.origin.y));
 
 //             if path.exists()
 //                 && let Ok(data) = fs::read(path).await
@@ -67,8 +68,8 @@
 //         }
 
 //         for chunk in self.chunks.chunks() {
-//             fs::write(format!("world/{}_{}.bin", chunk.origin.x, chunk.origin.y), chunk.serialize())
-//                 .await
+//             fs::write(format!("world/{}_{}.bin", chunk.origin.x,
+// chunk.origin.y), chunk.serialize())                 .await
 //                 .unwrap();
 //         }
 //     }
@@ -84,8 +85,8 @@
 //             }
 
 //             for chunk in world.take_chunks() {
-//                 fs::write(format!("world/{}_{}.bin", chunk.origin.x, chunk.origin.y), chunk.into_serialized())
-//                     .await
+//                 fs::write(format!("world/{}_{}.bin", chunk.origin.x,
+// chunk.origin.y), chunk.into_serialized())                     .await
 //                     .unwrap();
 //             }
 
@@ -113,19 +114,22 @@
 
 //         self.chunks.push(chunk);
 
-//         let mut bfs_light = BfsLight::new(&mut self.chunks).apply_to_sky_light();
+//         let mut bfs_light = BfsLight::new(&mut
+// self.chunks).apply_to_sky_light();
 
 //         bfs_light.addition_queue = queue;
 //         bfs_light.calculate();
 
-//         let Some(chunk) = self.chunks.get_chunk(&origin) else { unreachable!() };
+//         let Some(chunk) = self.chunks.get_chunk(&origin) else {
+// unreachable!() };
 
 //         chunk
 //     }
 
 //     pub fn try_load_chunk(&mut self, origin: IVec2) -> &Chunk {
 //         if self.chunks.contains_chunk(&origin) {
-//             let Some(chunk) = self.chunks.get_chunk(&origin) else { unreachable!() };
+//             let Some(chunk) = self.chunks.get_chunk(&origin) else {
+// unreachable!() };
 
 //             chunk
 //         } else {
@@ -133,11 +137,11 @@
 //         }
 //     }
 
-//     pub fn players_excluding(&self, uuid: Uuid) -> impl Iterator<Item = &Sender<OutgoingPacket>> {
-//         self.player_channels
+//     pub fn players_excluding(&self, uuid: Uuid) -> impl Iterator<Item =
+// &Sender<OutgoingPacket>> {         self.player_channels
 //             .iter()
-//             .filter_map(move |(key, value)| if key == &uuid { None } else { Some(value) })
-//     }
+//             .filter_map(move |(key, value)| if key == &uuid { None } else {
+// Some(value) })     }
 // }
 
 // #[tokio::main]
@@ -181,8 +185,8 @@
 //                         match packet {
 //                             Some(Ok(packet)) => match packet {
 //                                 IncomingPacket::PlayerConnected(name) => {
-//                                     let player = Player::new(name, Vec3::ZERO);
-//                                     let uuid = player.uuid;
+//                                     let player = Player::new(name,
+// Vec3::ZERO);                                     let uuid = player.uuid;
 //                                     let name = player.nickname.clone();
 
 //                                     current_player_uuid.replace(uuid);
@@ -190,60 +194,67 @@
 //                                     {
 //                                         let mut state = state.write().await;
 
-//                                         state.player_channels.insert(uuid, tx.clone());
-//                                         state.players.insert(uuid, player);
-//                                     }
+//                                         state.player_channels.insert(uuid,
+// tx.clone());
+// state.players.insert(uuid, player);                                     }
 
-//                                     connection.send(OutgoingPacket::UuidAssigned { uuid }).await.unwrap();
+// connection.send(OutgoingPacket::UuidAssigned { uuid }).await.unwrap();
 
-//                                     for player in state.read().await.players_excluding(uuid) {
-//                                         player.send(OutgoingPacket::PlayerConnected { uuid, name: name.clone() }).await.unwrap();
-//                                     }
+//                                     for player in
+// state.read().await.players_excluding(uuid) {
+// player.send(OutgoingPacket::PlayerConnected { uuid, name: name.clone()
+// }).await.unwrap();                                     }
 //                                 }
 //                                 packet => {
-//                                     let Some(current_uuid) = current_player_uuid else {
-//                                         continue;
+//                                     let Some(current_uuid) =
+// current_player_uuid else {                                         continue;
 //                                     };
 
 //                                     match packet {
-//                                         IncomingPacket::PlayerMoved { uuid, position } => {
-//                                             if let Some(player) = state.write().await.players.get_mut(&uuid) {
-//                                                 player.position = position;
-//                                             }
+//                                         IncomingPacket::PlayerMoved { uuid,
+// position } => {                                             if let
+// Some(player) = state.write().await.players.get_mut(&uuid) {
+// player.position = position;                                             }
 
-//                                             for player in state.read().await.players_excluding(current_uuid) {
-//                                                 player.send(OutgoingPacket::PlayerMoved { uuid, position }).await.unwrap();
+//                                             for player in
+// state.read().await.players_excluding(current_uuid) {
+// player.send(OutgoingPacket::PlayerMoved { uuid, position }).await.unwrap();
 //                                             }
 //                                         }
-//                                         IncomingPacket::GetPlayers => connection
-//                                             .send(OutgoingPacket::PlayersList {
-//                                                 players: state.read().await.players.values().cloned().collect(),
-//                                             })
-//                                             .await
+//                                         IncomingPacket::GetPlayers =>
+// connection
+// .send(OutgoingPacket::PlayersList {
+// players: state.read().await.players.values().cloned().collect(),
+// })                                             .await
 //                                             .unwrap(),
-//                                         IncomingPacket::RemoveBlock(chunk, block) => {
-//                                             {
-//                                                 let mut state = state.write().await;
+//                                         IncomingPacket::RemoveBlock(chunk,
+// block) => {                                             {
+//                                                 let mut state =
+// state.write().await;
 
-//                                                 state.chunks.get_chunk_mut(&chunk).unwrap().set_block(block, 0);
+// state.chunks.get_chunk_mut(&chunk).unwrap().set_block(block, 0);
 
-//                                                 let mut bfs_light = BfsLight::new(&mut state.chunks).apply_to_sky_light();
+//                                                 let mut bfs_light =
+// BfsLight::new(&mut state.chunks).apply_to_sky_light();
 
-//                                                 bfs_light.remove(LightNode(block, chunk));
-//                                                 bfs_light.calculate();
+// bfs_light.remove(LightNode(block, chunk));
+// bfs_light.calculate();
 
 //                                                 let mut queue = Vec::new();
-//                                                 let up = block + USizeVec3::Y;
+//                                                 let up = block +
+// USizeVec3::Y;
 
-//                                                 if up.y < 256 && bfs_light.chunk_manager[chunk].get_sky_light(up) == 15 {
-//                                                     let mut y = block.y;
+//                                                 if up.y < 256 &&
+// bfs_light.chunk_manager[chunk].get_sky_light(up) == 15 {
+// let mut y = block.y;
 
 //                                                     loop {
-//                                                         if bfs_light.chunk_manager[chunk].get_block(block.with_y(y)).is_some() {
+//                                                         if
+// bfs_light.chunk_manager[chunk].get_block(block.with_y(y)).is_some() {
 //                                                             break;
 //                                                         }
 
-//                                                         queue.push((LightNode(block.with_y(y), chunk), 15));
+// queue.push((LightNode(block.with_y(y), chunk), 15));
 
 //                                                         if y == 0 {
 //                                                             break;
@@ -253,21 +264,23 @@
 //                                                     }
 //                                                 }
 
-//                                                 bfs_light.addition_queue = queue;
-//                                                 bfs_light.calculate();
+//                                                 bfs_light.addition_queue =
+// queue;                                                 bfs_light.calculate();
 //                                             }
 
-//                                             for player in state.read().await.players_excluding(current_uuid) {
-//                                                 player.send(OutgoingPacket::RemoveBlock(chunk, block)).await.unwrap();
+//                                             for player in
+// state.read().await.players_excluding(current_uuid) {
+// player.send(OutgoingPacket::RemoveBlock(chunk, block)).await.unwrap();
 //                                             }
 //                                         }
-//                                         IncomingPacket::RequestChunk(origin) => {
-//                                             let data = state.write().await.try_load_chunk(origin).serialize();
+//                                         IncomingPacket::RequestChunk(origin)
+// => {                                             let data =
+// state.write().await.try_load_chunk(origin).serialize();
 
-//                                             connection.send(OutgoingPacket::ChunkData { data }).await.unwrap();
+// connection.send(OutgoingPacket::ChunkData { data }).await.unwrap();
 //                                         }
-//                                         IncomingPacket::PlayerConnected { .. } => unreachable!(),
-//                                     }
+//                                         IncomingPacket::PlayerConnected { ..
+// } => unreachable!(),                                     }
 //                                 }
 //                             },
 //                             Some(Err(err)) => println!("{err}"),
@@ -284,8 +297,8 @@
 //                 state.write().await.player_channels.remove(&uuid);
 
 //                 for player in state.read().await.player_channels.values() {
-//                     player.send(OutgoingPacket::PlayerDisonnected { uuid }).await.unwrap();
-//                 }
+//                     player.send(OutgoingPacket::PlayerDisonnected { uuid
+// }).await.unwrap();                 }
 //             }
 //         });
 //     }
@@ -312,7 +325,8 @@
 //         encoder.write_all(&serialized).await.unwrap();
 //         encoder.shutdown().await.unwrap();
 
-//         println!("Serialized: {} bytes. Compressed: {} bytes.", serialized.len(), compressed.len());
+//         println!("Serialized: {} bytes. Compressed: {} bytes.",
+// serialized.len(), compressed.len());
 
 //         let mut data = Vec::new();
 //         let mut decoder = ZlibDecoder::new(&mut data);
@@ -328,6 +342,4 @@
 //     }
 // }
 
-fn main() {
-    
-}
+fn main() {}

@@ -1,5 +1,10 @@
 use glium::{
-    DrawError, DrawParameters, Program, Surface, Texture2d, VertexBuffer, backend::Facade, framebuffer::{DepthRenderBuffer, MultiOutputFrameBuffer}, index::{NoIndices, PrimitiveType}, texture::TextureCreationError, uniform
+    DrawError, DrawParameters, Program, Surface, Texture2d, VertexBuffer,
+    backend::Facade,
+    framebuffer::{DepthRenderBuffer, MultiOutputFrameBuffer},
+    index::{NoIndices, PrimitiveType},
+    texture::TextureCreationError,
+    uniform,
 };
 use meralus_graphics::{Shader, impl_vertex};
 use meralus_shared::{Point2D, Point3D};

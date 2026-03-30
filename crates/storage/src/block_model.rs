@@ -40,12 +40,23 @@ impl FaceData {
             };
         }
 
+        // match self {
+        //     Self::Top => [X0Y1Z0, X1Y1Z0, X0Y1Z1, X1Y1Z1],
+        //     Self::Bottom => [X1Y0Z0, X0Y0Z0, X1Y0Z1, X0Y0Z1],
+        //     Self::Left => [X0Y0Z1, X0Y0Z0, X0Y1Z1, X0Y1Z0],
+        //     Self::Right => [X1Y0Z0, X1Y0Z1, X1Y1Z0, X1Y1Z1],
+
+        //     >>Self::Front => [X1Y0Z1, X0Y0Z1, X1Y1Z1, X0Y1Z1],
+
+        //     Self::Back => [X0Y0Z0, X1Y0Z0, X0Y1Z0, X1Y1Z0],
+        // }
+
         Self {
             face,
             normal: face.as_normal(),
             vertices,
             corners: face.as_vertex_corners().map(|corner| corner.get_neighbours(face)),
-            uvs: [Point2D::ZERO, Point2D::X, Point2D::Y, Point2D::ONE].map(|face_uv| {
+            uvs: [Point2D::X, Point2D::ZERO, Point2D::ONE, Point2D::Y].map(|face_uv| {
                 let face_uv = Point2D::new(face_uv.x * uv.scale.x, face_uv.y * uv.scale.y);
 
                 uv.offset + face_uv
@@ -85,7 +96,7 @@ impl BlockModelFace {
             FaceUV { offset, scale }
         };
 
-        BlockModelFace {
+        Self {
             texture_id: 0,
             face_data: FaceData::new(face, aabb, uv, rotation),
             cull_face: data
@@ -230,12 +241,12 @@ impl BakedBlockModelStorage {
 
         self.models.push(BakedBlockModel {
             name: name.to_string(),
-            ambient_occlusion: block.ambient_occlusion,
+            ambient_occlusion: block.ambient_occlusion.unwrap_or(true),
             elements,
             bounding_box: bounding_box.unwrap_or(const { Aabb::new(DPoint3D::ZERO, DPoint3D::ONE) }),
             is_opaque,
         });
 
-        Ok(self.models.last().unwrap())
+        self.models.last().ok_or(LoadingError::Model(ModelLoadingError::NotFound))
     }
 }

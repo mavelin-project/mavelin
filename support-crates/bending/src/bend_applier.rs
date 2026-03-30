@@ -39,7 +39,7 @@ impl BendApplier {
 
                 let v = half_size
                     - if (is_bend_inverted && s < 0.0) || (!is_bend_inverted && s >= 0.0) {
-                        1.0f32.min(s.abs() / 2.0)
+                        1f32.min(s.abs() / 2.0)
                     } else {
                         s.abs()
                     };

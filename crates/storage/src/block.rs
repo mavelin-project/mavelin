@@ -149,7 +149,7 @@ impl BlockStorage {
         {
             let mut parent_block = Self::load_block(root, mapping.join("models").join(&parent.1))?;
 
-            parent_block.ambient_occlusion = block.ambient_occlusion;
+            parent_block.ambient_occlusion = parent_block.ambient_occlusion.max(block.ambient_occlusion);
             parent_block.textures.extend(block.textures);
             parent_block.elements.extend(block.elements);
 

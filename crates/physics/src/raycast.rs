@@ -124,15 +124,15 @@ impl<T: AabbSource> PhysicsContext<T> {
             }
 
             if d3 == -0.0 {
-                d3 = -1.0E-4;
+                d3 = -1E-4;
             }
 
             if d4 == -0.0 {
-                d4 = -1.0E-4;
+                d4 = -1E-4;
             }
 
             if d5 == -0.0 {
-                d5 = -1.0E-4;
+                d5 = -1E-4;
             }
 
             let facing_at = if d3 < d4 && d3 < d5 {

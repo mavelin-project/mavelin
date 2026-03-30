@@ -199,15 +199,10 @@ pub struct BlockModel {
     ///
     /// `true` by default, but it is recommended to set `false` for models that
     /// are not a full cuboid (e.g. levers).
-    #[serde(default = "default_ao")]
-    pub ambient_occlusion: bool,
+    pub ambient_occlusion: Option<bool>,
     /// List of [`BlockElement`] describing the individual parts of the model.
     #[serde(default)]
     pub elements: Vec<BlockElement>,
-}
-
-const fn default_ao() -> bool {
-    true
 }
 
 impl BlockModel {

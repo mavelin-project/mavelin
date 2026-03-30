@@ -75,7 +75,7 @@ impl Entity {
                 let model = resource_storage.models.get_unchecked(item.id);
                 let mut current_block: IPoint3D = self.body.position.floor().as_();
                 let light = chunk_manager.get_light_level(current_block);
-                let matrix = Transform3D::from_rotation_y(Angle::from_radians(animation_value * const { 360.0f32.to_radians() }));
+                let matrix = Transform3D::from_rotation_y(Angle::from_radians(animation_value * const { 360f32.to_radians() }));
                 let animation_value = if animation_value > 0.5 { 1.0 - animation_value } else { animation_value };
                 let position_offset = Point3D::new(0.0, const { Point3D::new(0.3, 0.3, 0.3).y / 2.0 }, 0.0);
                 let block_below = loop {
@@ -720,7 +720,8 @@ impl World {
                 // if model.is_opaque
                 //     && neighbours
                 //         .iter()
-                //         .all(|neighbour| neighbour.is_some_and(|neighbour| resource_storage.models.get_unchecked(neighbour.into()).is_opaque))
+                //         .all(|neighbour| neighbour.is_some_and(|neighbour|
+                // resource_storage.models.get_unchecked(neighbour.into()).is_opaque))
                 // {
                 //     continue;
                 // }
@@ -744,29 +745,33 @@ impl World {
                             let mut lights = [0; 4];
 
                             for (([side1, side2, corner], ao), light) in model_face.face_data.corners.into_iter().zip(&mut aos).zip(&mut lights) {
-                                let side1_block = world_position + side1;
-                                let side2_block = world_position + side2;
-                                let corner_block = world_position + corner;
+                                if model.ambient_occlusion {
+                                    let side1_block = world_position + side1;
+                                    let side2_block = world_position + side2;
+                                    let corner_block = world_position + corner;
 
-                                let init_light = chunk_manager.get_block_light(light_source);
-                                let side1_light = chunk_manager.get_block_light(side1_block);
-                                let side2_light = chunk_manager.get_block_light(side2_block);
-                                let corner_light = chunk_manager.get_block_light(corner_block);
+                                    let init_light = chunk_manager.get_block_light(light_source);
+                                    let side1_light = chunk_manager.get_block_light(side1_block);
+                                    let side2_light = chunk_manager.get_block_light(side2_block);
+                                    let corner_light = chunk_manager.get_block_light(corner_block);
 
-                                *light = (*light & 0xF0) | ((init_light + side1_light + side2_light + corner_light) / 4);
+                                    *light = (*light & 0xF0) | ((init_light + side1_light + side2_light + corner_light) / 4);
 
-                                let init_light = chunk_manager.get_sky_light(light_source);
-                                let side1_light = chunk_manager.get_sky_light(side1_block);
-                                let side2_light = chunk_manager.get_sky_light(side2_block);
-                                let corner_light = chunk_manager.get_sky_light(corner_block);
+                                    let init_light = chunk_manager.get_sky_light(light_source);
+                                    let side1_light = chunk_manager.get_sky_light(side1_block);
+                                    let side2_light = chunk_manager.get_sky_light(side2_block);
+                                    let corner_light = chunk_manager.get_sky_light(corner_block);
 
-                                *light = (*light & 0xF) | ((init_light + side1_light + side2_light + corner_light) / 4) << 4;
+                                    *light = (*light & 0xF) | ((init_light + side1_light + side2_light + corner_light) / 4) << 4;
 
-                                *ao = vertex_ao(
-                                    Self::does_block_have_ao(chunk_manager, resource_storage, side1_block),
-                                    Self::does_block_have_ao(chunk_manager, resource_storage, side2_block),
-                                    Self::does_block_have_ao(chunk_manager, resource_storage, corner_block),
-                                );
+                                    *ao = vertex_ao(
+                                        Self::does_block_have_ao(chunk_manager, resource_storage, side1_block),
+                                        Self::does_block_have_ao(chunk_manager, resource_storage, side2_block),
+                                        Self::does_block_have_ao(chunk_manager, resource_storage, corner_block),
+                                    );
+                                } else {
+                                    *light = chunk_manager.get_light_level(light_source);
+                                }
                             }
 
                             let mut vertices = model_face.face_data.vertices;

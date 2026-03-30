@@ -435,7 +435,7 @@ impl ChunkGenerator {
                     d8 -= d9;
 
                     if y > size.y - 4 {
-                        let d13 = f64::from((y - (size.y - 4)) as f32 / 3.0f32);
+                        let d13 = f64::from((y - (size.y - 4)) as f32 / 3f32);
 
                         d8 = d8.mul_add(1.0 - d13, -10.0 * d13);
                     }
@@ -488,8 +488,8 @@ struct Perlin {
     z_offset: f64,
 }
 
-static F: LazyLock<f64> = LazyLock::new(|| 0.5 * (3.0f64.sqrt() - 1.0));
-static G: LazyLock<f64> = LazyLock::new(|| (3.0 - 3.0f64.sqrt()) / 6.0);
+static F: LazyLock<f64> = LazyLock::new(|| 0.5 * (3f64.sqrt() - 1.0));
+static G: LazyLock<f64> = LazyLock::new(|| (3.0 - 3f64.sqrt()) / 6.0);
 
 #[allow(clippy::similar_names, dead_code)]
 impl Perlin {
@@ -669,8 +669,8 @@ impl Perlin {
 
                 let d13 = d11 - f64::from(b0) + *G;
                 let d14 = d12 - f64::from(b1) + *G;
-                let d15 = 2.0f64.mul_add(*G, d11 - 1.0);
-                let d16 = 2.0f64.mul_add(*G, d12 - 1.0);
+                let d15 = 2f64.mul_add(*G, d11 - 1.0);
+                let d16 = 2f64.mul_add(*G, d12 - 1.0);
                 let l1 = j1 & 255;
                 let i2 = k1 & 255;
                 let j2 = self.permute_table[(l1 + self.permute_table[i2 as usize]) as usize] % 12;
