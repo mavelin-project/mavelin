@@ -25,6 +25,7 @@ use std::{
     time::Duration,
 };
 
+use discord_presence::models::{ActivityType, DisplayType};
 use glium::{
     Surface, Texture2d,
     texture::MipmapsOption,
@@ -180,6 +181,8 @@ struct GameLoop {
     progress: Progress,
 
     world: Option<World>,
+
+    drpc: discord_presence::Client,
 }
 
 const INVENTORY_HOTBAR_SLOTS: u8 = 8;
@@ -373,6 +376,13 @@ impl State for GameLoop {
 
         init_animation_player(&mut animation_player);
 
+        let mut drpc = discord_presence::Client::new(1488208518765871164);
+
+        drpc.on_connected(|e| println!("E: {:#?}", e.event)).persist();
+        drpc.on_ready(|e| println!("E: {:#?}", e.event)).persist();
+
+        drpc.start();
+
         Self {
             input: Input::with_binds([
                 ("walk.forward", KeyCode::KeyW),
@@ -409,6 +419,7 @@ impl State for GameLoop {
             .unwrap_or_else(|e| panic!("failed to create empty texture atlas on GPU: {e}")),
             scene: WorldScene::new(display, width, height).unwrap(),
             kawase: DualKawase::new(display, width, height).unwrap(),
+            drpc,
         }
     }
 
@@ -571,8 +582,21 @@ impl State for GameLoop {
             world.update(self.common_renderer.white_pixel_uv(), &mut self.debugging);
         }
 
-        if self.accel >= const { Duration::from_secs(1) } {
+        if self.accel >= const { Duration::from_secs(5) } {
             self.accel = Duration::ZERO;
+
+            let mut drpc = self.drpc.clone();
+            let chunks = self.world.as_ref().map(|world| world.chunk_manager.len());
+
+            std::thread::spawn(move || {
+                drpc.set_activity(|activity| {
+                    activity
+                        .activity_type(ActivityType::Playing)
+                        .details(chunks.map_or_else(|| String::from("In Main Menu"), |chunks| format!("In world ({chunks} loaded chunks)")))
+                        .status_display(DisplayType::Details)
+                })
+                .expect("Failed to set activity");
+            });
 
             if let Some(world) = self.world.as_mut() {
                 world.ticks = world.tick_sum;

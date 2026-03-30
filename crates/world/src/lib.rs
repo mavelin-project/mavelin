@@ -282,7 +282,7 @@ impl ChunkGenerator {
                                     }
                                 }
 
-                                if y < top_start_y as i32 && top == air {
+                                if y < i32::from(top_start_y) && top == air {
                                     top = water;
                                 }
 
@@ -697,63 +697,69 @@ impl Perlin {
                     d21 * d21 * d21 * d21 * Self::a_f64(&Self::D[l2 as usize], d15, d16)
                 };
 
-                noise_data[index] += 70.0 * (x + y + z) * scale.z;
+                noise_data[index] = (70.0 * (x + y + z)).mul_add(scale.z, noise_data[index]);
 
                 index += 1;
             }
         }
     }
 
-    fn generate_noise3d(&self, data: &mut [f64], offset: DPoint3D, size: IPoint3D, scale: DPoint3D, frequency: f64) {
+    fn generate_noise3d_short(&self, data: &mut [f64], offset: DPoint3D, size: IPoint3D, scale: DPoint3D, frequency: f64) {
         let inv_frequency = 1.0 / frequency;
         let mut data_offset = 0;
 
-        if size.y == 1 {
-            for x in 0..size.x {
-                let mut x = (offset.x + f64::from(x)).mul_add(scale.x, self.x_offset);
-                let mut x_i32 = x as i32;
+        for x in 0..size.x {
+            let mut x = (offset.x + f64::from(x)).mul_add(scale.x, self.x_offset);
+            let mut x_i32 = x as i32;
 
-                if x < f64::from(x_i32) {
-                    x_i32 -= 1;
-                }
-
-                x -= f64::from(x_i32);
-
-                let x_modulo = x_i32 & 255;
-                let final_x = x * x * x * x.mul_add(x.mul_add(6.0, -15.0), 10.0);
-
-                for z in 0..size.z {
-                    let mut z = (offset.z + f64::from(z)).mul_add(scale.z, self.z_offset);
-                    let mut z_i32 = z as i32;
-
-                    if z < f64::from(z_i32) {
-                        z_i32 -= 1;
-                    }
-
-                    z -= f64::from(z_i32);
-
-                    let z_modulo = z_i32 & 255;
-                    let hash1 = self.permute_table[self.permute_table[x_modulo as usize] as usize] + z_modulo;
-                    let hash2 = self.permute_table[self.permute_table[x_modulo as usize + 1] as usize] + z_modulo;
-
-                    data[data_offset as usize] += Self::b(
-                        z * z * z * z.mul_add(z.mul_add(6.0, -15.0), 10.0),
-                        Self::b(
-                            final_x,
-                            Self::a3i(self.permute_table[hash1 as usize], x, z),
-                            Self::a4(self.permute_table[hash2 as usize], x - 1.0, 0.0, z),
-                        ),
-                        Self::b(
-                            final_x,
-                            Self::a4(self.permute_table[hash1 as usize + 1], x, 0.0, z - 1.0),
-                            Self::a4(self.permute_table[hash2 as usize + 1], x - 1.0, 0.0, z - 1.0),
-                        ),
-                    ) * inv_frequency;
-
-                    data_offset += 1;
-                }
+            if x < f64::from(x_i32) {
+                x_i32 -= 1;
             }
+
+            x -= f64::from(x_i32);
+
+            let x_modulo = x_i32 & 255;
+            let final_x = x * x * x * x.mul_add(x.mul_add(6.0, -15.0), 10.0);
+
+            for z in 0..size.z {
+                let mut z = (offset.z + f64::from(z)).mul_add(scale.z, self.z_offset);
+                let mut z_i32 = z as i32;
+
+                if z < f64::from(z_i32) {
+                    z_i32 -= 1;
+                }
+
+                z -= f64::from(z_i32);
+
+                let z_modulo = z_i32 & 255;
+                let hash1 = self.permute_table[self.permute_table[x_modulo as usize] as usize] + z_modulo;
+                let hash2 = self.permute_table[self.permute_table[x_modulo as usize + 1] as usize] + z_modulo;
+
+                data[data_offset as usize] += Self::b(
+                    z * z * z * z.mul_add(z.mul_add(6.0, -15.0), 10.0),
+                    Self::b(
+                        final_x,
+                        Self::a3i(self.permute_table[hash1 as usize], x, z),
+                        Self::a4(self.permute_table[hash2 as usize], x - 1.0, 0.0, z),
+                    ),
+                    Self::b(
+                        final_x,
+                        Self::a4(self.permute_table[hash1 as usize + 1], x, 0.0, z - 1.0),
+                        Self::a4(self.permute_table[hash2 as usize + 1], x - 1.0, 0.0, z - 1.0),
+                    ),
+                ) * inv_frequency;
+
+                data_offset += 1;
+            }
+        }
+    }
+
+    fn generate_noise3d(&self, data: &mut [f64], offset: DPoint3D, size: IPoint3D, scale: DPoint3D, frequency: f64) {
+        if size.y == 1 {
+            self.generate_noise3d_short(data, offset, size, scale, frequency);
         } else {
+            let inv_frequency = 1.0 / frequency;
+            let mut data_offset = 0;
             let mut old_y = -1;
             let mut val1 = 0.0;
             let mut val2 = 0.0;

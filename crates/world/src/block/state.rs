@@ -6,7 +6,7 @@ pub struct BlockStates {
     pub variants: Vec<BlockState>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd)]
 #[serde(untagged)]
 pub enum PropertyValue {
     Number(i64),

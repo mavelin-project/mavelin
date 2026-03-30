@@ -175,7 +175,7 @@ impl ChunkManager {
                 let mut y = local.y;
 
                 loop {
-                    if bfs_light.chunk_manager[chunk_position].get_block(local.with_y(y)).filter(|&b| b != 0).is_some() {
+                    if bfs_light.chunk_manager[chunk_position].get_block(local.with_y(y)).is_some_and(|b| b != 0) {
                         break;
                     }
 
