@@ -3,9 +3,11 @@
 in vec3 position;
 in vec2 uv;
 in vec4 color;
+in vec4 clip;
 
 out vec2 v_uv;
 out vec4 v_color;
+flat out vec4 v_clip;
 
 uniform mat4 matrix;
 
@@ -21,4 +23,5 @@ void main() {
 
   v_uv = uv;
   v_color = f_color;
+  v_clip = clip;
 }

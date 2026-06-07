@@ -1,6 +1,6 @@
 use meralus_graphics::CommonVertex;
 use meralus_physics::Aabb;
-use meralus_shared::{Color, Cube3D, Point2D, Point3D, Vector3D};
+use meralus_shared::{Color, Cube3D, Point2D, Point3D, Vector3D, Vector4D};
 use meralus_world::Face;
 
 use crate::input::Input;
@@ -116,11 +116,13 @@ pub fn cube_outline(Cube3D { origin, size }: Cube3D, white_pixel_uv: Point2D) ->
                 position: origin + Point3D::from_array(start),
                 color: Color::BLUE,
                 uv: white_pixel_uv,
+                clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
             },
             CommonVertex {
                 position: origin + Point3D::from_array(end),
                 color: Color::BLUE,
                 uv: white_pixel_uv,
+                clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
             },
         ]);
 
@@ -152,11 +154,13 @@ pub fn aabb_outline(Aabb { min, max }: Aabb, white_pixel_uv: Point2D) -> Vec<Com
                 position: min.as_() + Point3D::from_array(start),
                 color: Color::BLUE,
                 uv: white_pixel_uv,
+                clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
             },
             CommonVertex {
                 position: min.as_() + Point3D::from_array(end),
                 color: Color::BLUE,
                 uv: white_pixel_uv,
+                clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
             },
         ]);
 

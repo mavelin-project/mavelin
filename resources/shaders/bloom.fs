@@ -7,7 +7,7 @@ out vec4 f_color;
 uniform sampler2D scene;
 uniform sampler2D bright;
 
-const float gamma = 2.2;
+const float gamma = 1.2;
 
 void main() {
     vec3 hdrColor = texture(scene, f_uv).rgb;      

@@ -5,8 +5,8 @@
 // });
 
 // events.on_world_start(|world| {
-//     world.send_chat_message("ого это ли общение...");
-//     world.send_chat_message("думаю здесь можно составлять достаточно длинные текста и переносится они будут нормально, по крайней мере я на это надеюсь");
+//     world.send_chat_message("Hello World!");
+//     world.send_chat_message("Hello Hello This Wonderfully Long World That Full of Amazing Blocks! And Creatures, I Suppose.");
 // });
 
 // events.on_message(|world| {

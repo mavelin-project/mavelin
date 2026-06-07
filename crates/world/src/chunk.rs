@@ -106,6 +106,13 @@ impl Chunk {
         }
     }
 
+    #[must_use]
+    pub const fn with_origin(mut self, origin: IPoint2D) -> Self {
+        self.origin = origin;
+
+        self
+    }
+
     pub const fn index_of_biome(position: USizePoint2D) -> usize {
         position.y * SUBCHUNK_SIZE + position.x
     }

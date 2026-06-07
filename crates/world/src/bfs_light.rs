@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use meralus_shared::{IPoint2D, USizePoint3D};
 
-use crate::{BlockSource, CHUNK_HEIGHT, Chunk, ChunkManagerLike, Face};
+use crate::{BlockSource, CHUNK_HEIGHT, Chunk, ChunkAccess, Face};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LightNode(pub USizePoint3D, pub IPoint2D);
@@ -13,7 +13,7 @@ impl LightNode {
     }
 }
 
-pub struct BfsLight<'a, C: ChunkManagerLike> {
+pub struct BfsLight<'a, C: ChunkAccess> {
     pub chunk_manager: &'a mut C,
     pub addition_queue: VecDeque<LightNode>,
     pub removing_queue: Vec<(LightNode, u8)>,
@@ -21,7 +21,7 @@ pub struct BfsLight<'a, C: ChunkManagerLike> {
     pub starting_chunk: Option<IPoint2D>,
 }
 
-impl<'a, C: ChunkManagerLike> BfsLight<'a, C> {
+impl<'a, C: ChunkAccess> BfsLight<'a, C> {
     #[must_use]
     pub const fn new(chunk_manager: &'a mut C) -> Self {
         Self {
@@ -135,7 +135,7 @@ impl<'a, C: ChunkManagerLike> BfsLight<'a, C> {
 mod tests {
     use meralus_shared::{IPoint2D, IPoint3D, USizePoint3D};
 
-    use crate::{BfsLight, BlockSource, ChunkManager, ChunkManagerLike};
+    use crate::{BfsLight, BlockSource, ChunkAccess, ChunkManager};
 
     struct TestBlockSource {
         ids: Vec<&'static str>,

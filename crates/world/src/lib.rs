@@ -14,8 +14,9 @@ mod chunk_manager;
 mod entity;
 mod random;
 
-use std::sync::LazyLock;
+use std::{collections::VecDeque, sync::LazyLock};
 
+use ahash::{HashMap, HashSet};
 use meralus_shared::{DPoint2D, DPoint3D, IPoint2D, IPoint3D, USizePoint2D, USizePoint3D};
 pub use serde_json::Error as JsonError;
 
@@ -29,7 +30,7 @@ pub use self::{
         CHUNK_HEIGHT, CHUNK_HEIGHT_F32, CHUNK_HEIGHT_F64, CHUNK_HEIGHT_I32, CHUNK_HEIGHT_U16, Chunk, SUBCHUNK_COUNT, SUBCHUNK_COUNT_F32, SUBCHUNK_COUNT_I32,
         SUBCHUNK_COUNT_U16, SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32, SUBCHUNK_SIZE_F64, SUBCHUNK_SIZE_I32, SUBCHUNK_SIZE_U16, SubChunk,
     },
-    chunk_manager::{ChunkCache, ChunkManager, ChunkManagerLike, ChunkStage, LocalChunkManager},
+    chunk_manager::{ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LocalChunkManager},
     entity::{EntityElement, EntityElementData, EntityElementFace, EntityModel, EntityTexture},
 };
 use crate::random::Random;
@@ -449,7 +450,7 @@ impl ChunkGenerator {
         noise
     }
 
-    pub fn populate<C: ChunkManagerLike, T: BlockSource>(&self, chunk_manager: &mut C, block_source: &T, world_seed: i64, chunk: IPoint2D) {
+    pub fn populate<C: ChunkAccess, T: BlockSource>(&self, chunk_manager: &mut C, block_source: &T, world_seed: i64, chunk: IPoint2D) {
         let origin = chunk * SUBCHUNK_SIZE_I32;
         // let _biomebase = self.biome_generator.get_biome_noise(origin +
         // SUBCHUNK_SIZE_I32, IPoint2D::ONE).biomes[0];
@@ -1011,7 +1012,7 @@ struct LakesGenerator {
 }
 
 impl LakesGenerator {
-    pub fn populate<C: ChunkManagerLike>(&self, chunk_manager: &mut C, random: &mut Random, mut center: IPoint3D) -> bool {
+    pub fn populate<C: ChunkAccess>(&self, chunk_manager: &mut C, random: &mut Random, mut center: IPoint3D) -> bool {
         center.x -= 8;
         center.z -= 8;
 
@@ -1066,7 +1067,7 @@ impl LakesGenerator {
                         }
 
                         if y < 4 && material.is_none_or(|b| b == 0)
-                        // || material == self.primary_block) && chunk.get_block_uncehced(centerX + i1, centerY + j2, centerZ + i2) != this.a.getMaterial())
+                        // || material == self.primary_block) && chunk.get_block_uncehced(center.x + i1, center.y + j2, center.z + i2) != this.a.getMaterial())
                         {
                             return false;
                         }

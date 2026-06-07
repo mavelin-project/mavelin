@@ -804,62 +804,68 @@ impl<'a> RenderContext<'a> {
         self.current_layer = Some(layer_idx);
     }
 
-    pub fn end_render_layer<S: Surface>(&mut self, display: &WindowDisplay, surface: &mut S, color: Color, matrix: Option<Transform3D>) -> Option<RenderInfo> {
-        if let Some(layer_idx) = self.current_layer.take() {
-            let layer = self.layers.remove(&layer_idx);
+    // pub fn end_render_layer<S: Surface>(&mut self, display: &WindowDisplay,
+    // surface: &mut S, color: Color, matrix: Option<Transform3D>) ->
+    // Option<RenderInfo> {     if let Some(layer_idx) = self.current_layer.take()
+    // {         let layer = self.layers.remove(&layer_idx);
 
-            if layer_idx > 0 {
-                self.current_layer = Some(layer_idx - 1);
-            }
+    //         if layer_idx > 0 {
+    //             self.current_layer = Some(layer_idx - 1);
+    //         }
 
-            if let Some((layer, buffers)) = layer {
-                let mut buffer = SimpleFrameBuffer::new(display, &layer).unwrap();
-                let window_matrix = Transform3D::orthographic_rh_gl(0.0, self.window_size.width, self.window_size.height, 0.0, -1.0, 1.0);
-                let _info = self.common_renderer.render(&mut buffer, display, Some(window_matrix)).unwrap();
+    //         if let Some((layer, buffers)) = layer {
+    //             let mut buffer = SimpleFrameBuffer::new(display,
+    // &layer).unwrap();             let window_matrix =
+    // Transform3D::orthographic_rh_gl(0.0, self.window_size.width,
+    // self.window_size.height, 0.0, -1.0, 1.0);             let _info =
+    // self.common_renderer.render(&mut buffer, display,
+    // Some(window_matrix)).unwrap();
 
-                let vertices = TEXT_BASE_VERTICES.map(|(position, uv)| CommonVertex {
-                    position: (Point2D::ZERO + Point2D::new(position.x * self.window_size.width, position.y * self.window_size.height)).extend(position.z),
-                    color,
-                    uv,
-                });
+    //             let vertices = TEXT_BASE_VERTICES.map(|(position, uv)|
+    // CommonVertex {                 position: (Point2D::ZERO +
+    // Point2D::new(position.x * self.window_size.width, position.y *
+    // self.window_size.height)).extend(position.z),                 color,
+    //                 uv,
+    //             });
 
-                let indices: [u32; 6] = [0, 1, 2, 3, 2, 1];
+    //             let indices: [u32; 6] = [0, 1, 2, 3, 2, 1];
 
-                let vertex_buffer = VertexBuffer::new(display, &vertices).unwrap();
-                let index_buffer = IndexBuffer::new(display, PrimitiveType::TrianglesList, &indices).unwrap();
-                let matrix = matrix.unwrap_or_else(|| {
-                    let (width, height) = surface.get_dimensions();
+    //             let vertex_buffer = VertexBuffer::new(display,
+    // &vertices).unwrap();             let index_buffer =
+    // IndexBuffer::new(display, PrimitiveType::TrianglesList, &indices).unwrap();
+    //             let matrix = matrix.unwrap_or_else(|| {
+    //                 let (width, height) = surface.get_dimensions();
 
-                    Transform3D::orthographic_rh_gl(0.0, width as f32, height as f32, 0.0, -1.0, 1.0)
-                });
+    //                 Transform3D::orthographic_rh_gl(0.0, width as f32, height as
+    // f32, 0.0, -1.0, 1.0)             });
 
-                let uniforms = uniform! {
-                    atlas: layer
-                        .sampled()
-                        .minify_filter(MinifySamplerFilter::Nearest)
-                        .magnify_filter(MagnifySamplerFilter::Nearest),
-                    matrix: matrix.to_cols_array_2d(),
-                };
+    //             let uniforms = uniform! {
+    //                 atlas: layer
+    //                     .sampled()
+    //                     .minify_filter(MinifySamplerFilter::Nearest)
+    //                     .magnify_filter(MagnifySamplerFilter::Nearest),
+    //                 matrix: matrix.to_cols_array_2d(),
+    //             };
 
-                let vertices = vertex_buffer.len();
+    //             let vertices = vertex_buffer.len();
 
-                surface
-                    .draw(&vertex_buffer, &index_buffer, &self.common_renderer.shader, &uniforms, &DrawParameters {
-                        blend: BLENDING,
-                        ..DrawParameters::default()
-                    })
-                    .unwrap();
+    //             surface
+    //                 .draw(&vertex_buffer, &index_buffer,
+    // &self.common_renderer.shader, &uniforms, &DrawParameters {
+    // blend: BLENDING,                     ..DrawParameters::default()
+    //                 })
+    //                 .unwrap();
 
-                self.common_renderer.buffers = buffers;
+    //             self.common_renderer.buffers = buffers;
 
-                Some(RenderInfo { draw_calls: 1, vertices })
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
+    //             Some(RenderInfo { draw_calls: 1, vertices })
+    //         } else {
+    //             None
+    //         }
+    //     } else {
+    //         None
+    //     }
+    // }
 
     pub fn finish<S: Surface>(self, display: &WindowDisplay, surface: &mut S) -> RenderInfo {
         self.common_renderer.render(surface, display, None).unwrap()
@@ -885,21 +891,45 @@ impl<'a> RenderContext<'a> {
     pub fn clipped<F: FnOnce(&mut RenderContext, Rect2D)>(&mut self, bounds: Rect2D, func: F) {
         self.clip.replace(bounds);
 
+        let mut bounds = bounds.to_box2();
+        let max_y = bounds.max.y;
+        let min_y = bounds.min.y;
+
+        bounds.min.x /= self.window_size.width;
+        bounds.min.y = 1.0 - (max_y / self.window_size.height);
+        bounds.max.x /= self.window_size.width;
+        bounds.max.y = 1.0 - (min_y / self.window_size.height);
+
+        self.common_renderer.clip.replace(bounds.to_array().into());
+
         func(self, self.bounds);
 
+        self.common_renderer.clip.take();
         self.clip.take();
     }
 
     pub fn clipped_bounds<F: FnOnce(&mut RenderContext, Rect2D)>(&mut self, bounds: Rect2D, func: F) {
         let tmp = self.bounds;
 
-        self.clip.replace(bounds);
         self.bounds = bounds;
+        self.clip.replace(bounds);
+
+        let mut bounds = bounds.to_box2();
+        let max_y = bounds.max.y;
+        let min_y = bounds.min.y;
+
+        bounds.min.x /= self.window_size.width;
+        bounds.min.y = 1.0 - (max_y / self.window_size.height);
+        bounds.max.x /= self.window_size.width;
+        bounds.max.y = 1.0 - (min_y / self.window_size.height);
+
+        self.common_renderer.clip.replace(bounds.to_array().into());
 
         func(self, self.bounds);
 
-        self.bounds = tmp;
+        self.common_renderer.clip.take();
         self.clip.take();
+        self.bounds = tmp;
     }
 
     pub fn bounds<F: FnOnce(&mut RenderContext, Rect2D)>(&mut self, bounds: Rect2D, func: F) {

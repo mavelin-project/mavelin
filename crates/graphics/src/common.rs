@@ -30,7 +30,7 @@ use lyon_tessellation::{
 use meralus_engine::WindowDisplay;
 #[cfg(feature = "image-rendering")]
 use meralus_shared::ConvertTo;
-use meralus_shared::{Color, Point2D, Point3D, Transform3D};
+use meralus_shared::{Color, Point2D, Point3D, Transform3D, UPoint2D, Vector4D};
 #[cfg(feature = "text-rendering")]
 use meralus_shared::{ConvertFrom, IntConversionError};
 #[cfg(feature = "shape-rendering")]
@@ -53,13 +53,15 @@ pub struct CommonVertex {
     pub position: Point3D,
     pub color: Color,
     pub uv: Point2D,
+    pub clip: Vector4D,
 }
 
 impl_vertex! {
     CommonVertex {
         position: [f32; 3],
         color: [u8; 4],
-        uv: [f32; 2]
+        uv: [f32; 2],
+        clip: [f32; 4]
     }
 }
 
@@ -158,6 +160,7 @@ impl FillGeometryBuilder for ShapeGeometryBuilder {
             } else {
                 self.white_pixel_uv
             },
+            clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
         });
 
         let len = self.buffers.vertices.len();
@@ -177,6 +180,7 @@ impl StrokeGeometryBuilder for ShapeGeometryBuilder {
             position: Point3D::from_array(vertex.position().extend(0.0).to_array()),
             color: self.color,
             uv: self.white_pixel_uv,
+            clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
         });
 
         let len = self.buffers.vertices.len();
@@ -354,6 +358,8 @@ pub struct CommonRenderer {
 
     matrix: Option<Transform3D>,
     window_matrix: Transform3D,
+
+    pub clip: Option<(Point2D, Point2D)>,
 }
 
 pub struct OwnedFont {
@@ -425,6 +431,7 @@ impl CommonRenderer {
             transform: None,
             window_matrix: Transform3D::IDENTITY,
             matrix: None,
+            clip: None,
         })
     }
 
@@ -649,6 +656,7 @@ impl CommonRenderer {
                 position,
                 color: Color::WHITE,
                 uv: offset + Point2D::new(uv.x * uv_size.x, uv.y * uv_size.y),
+                clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
             }
         }));
 
@@ -856,6 +864,10 @@ impl CommonRenderer {
                 .as_ref()
                 .map_or(vertex.position, |transform| transform.transform_point3(vertex.position));
 
+            if let Some(clip) = self.clip {
+                vertex.clip = Vector4D::new(clip.0.x, clip.0.y, clip.1.x, clip.1.y);
+            }
+
             vertex
         }));
 
@@ -984,6 +996,7 @@ impl CommonRenderer {
                 .sampled()
                 .minify_filter(MinifySamplerFilter::Nearest)
                 .magnify_filter(MagnifySamplerFilter::Nearest),
+            resolution: UPoint2D::from_tuple(surface.get_dimensions()).as_::<f32>().to_array(),
             matrix: matrix.to_cols_array_2d(),
         };
 
@@ -1010,6 +1023,7 @@ impl CommonRenderer {
                 .sampled()
                 .minify_filter(MinifySamplerFilter::Nearest)
                 .magnify_filter(MagnifySamplerFilter::Nearest),
+            resolution: UPoint2D::from_tuple(surface.get_dimensions()).as_::<f32>().to_array(),
             matrix: matrix.to_cols_array_2d(),
         };
 

@@ -23,7 +23,7 @@ impl ChunkCache for () {
     fn insert(&mut self, _: IPoint2D, _: &Chunk) {}
 }
 
-pub trait ChunkManagerLike {
+pub trait ChunkAccess {
     fn get_chunk(&self, origin: IPoint2D) -> Option<&Chunk>;
     fn get_chunk_mut(&mut self, origin: IPoint2D) -> Option<&mut Chunk>;
     fn get_block(&self, position: IPoint3D) -> Option<u8>;
@@ -39,7 +39,7 @@ pub trait ChunkManagerLike {
 
 pub struct LocalChunkManager {
     chunk: Chunk,
-    neighbours: [Option<Chunk>; 8],
+    neighbours: [Chunk; 8],
 }
 
 impl LocalChunkManager {
@@ -58,16 +58,21 @@ impl LocalChunkManager {
                 IPoint2D::new(-1, -1),
                 IPoint2D::new(1, -1),
             ]
-            .map(|offset| chunk_manager.get_chunk(origin + offset).cloned()),
+            .map(|offset| {
+                chunk_manager
+                    .get_chunk(origin + offset)
+                    .cloned()
+                    .unwrap_or_else(|| Chunk::empty().with_origin(origin + offset))
+            }),
         }
     }
 
-    pub fn into_inner(self) -> (Chunk, [Option<Chunk>; 8]) {
+    pub fn into_inner(self) -> (Chunk, [Chunk; 8]) {
         (self.chunk, self.neighbours)
     }
 }
 
-impl ChunkManagerLike for LocalChunkManager {
+impl ChunkAccess for LocalChunkManager {
     fn get_chunk(&self, origin: IPoint2D) -> Option<&Chunk> {
         let delta = origin - self.chunk.origin;
 
@@ -80,33 +85,9 @@ impl ChunkManagerLike for LocalChunkManager {
         }
 
         let idx = ((delta.x + 1) + (delta.y + 1) * 3) as usize;
-        let mapping = [6, 3, 4, 0, 99, 1, 7, 2, 5]; // 99 is a placeholder for center
+        let mapping = [6, 3, 7, 0, 99, 1, 4, 2, 5]; // 99 is a placeholder for center
 
-        self.neighbours[mapping[idx]].as_ref()
-
-        // let origin = origin - self.chunk.origin;
-
-        // match origin.to_tuple() {
-        //   // center
-        //   (0, 0) => Some(&self.chunk),
-        //   // left
-        //   (-1, 0) => self.neighbours[0].as_ref(),
-        //   // right
-        //   (1, 0) => self.neighbours[1].as_ref(),
-        //   // top
-        //   (0, 1) => self.neighbours[2].as_ref(),
-        //   // bottom
-        //   (0, -1) => self.neighbours[3].as_ref(),
-        //   // top left
-        //   (-1, 1) => self.neighbours[4].as_ref(),
-        //   // top right
-        //   (1, 1) => self.neighbours[5].as_ref(),
-        //   // bottom left
-        //   (-1, -1) => self.neighbours[6].as_ref(),
-        //   // bottom right
-        //   (1, -1) => self.neighbours[7].as_ref(),
-        //   _ => None,
-        // }
+        Some(&self.neighbours[mapping[idx]])
     }
 
     fn get_chunk_mut(&mut self, origin: IPoint2D) -> Option<&mut Chunk> {
@@ -123,31 +104,7 @@ impl ChunkManagerLike for LocalChunkManager {
         let idx = ((delta.x + 1) + (delta.y + 1) * 3) as usize;
         let mapping = [6, 3, 4, 0, 99, 1, 7, 2, 5]; // 99 is a placeholder for center
 
-        self.neighbours[mapping[idx]].as_mut()
-
-        // let origin = origin - self.chunk.origin;
-
-        // match origin.to_tuple() {
-        //   // center
-        //   (0, 0) => Some(&self.chunk),
-        //   // left
-        //   (-1, 0) => self.neighbours[0].as_ref(),
-        //   // right
-        //   (1, 0) => self.neighbours[1].as_ref(),
-        //   // top
-        //   (0, 1) => self.neighbours[2].as_ref(),
-        //   // bottom
-        //   (0, -1) => self.neighbours[3].as_ref(),
-        //   // top left
-        //   (-1, 1) => self.neighbours[4].as_ref(),
-        //   // top right
-        //   (1, 1) => self.neighbours[5].as_ref(),
-        //   // bottom left
-        //   (-1, -1) => self.neighbours[6].as_ref(),
-        //   // bottom right
-        //   (1, -1) => self.neighbours[7].as_ref(),
-        //   _ => None,
-        // }
+        Some(&mut self.neighbours[mapping[idx]])
     }
 
     fn get_block(&self, position: IPoint3D) -> Option<u8> {
@@ -223,13 +180,13 @@ impl ChunkManagerLike for LocalChunkManager {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ChunkStage {
     Unloaded,
-    Bare,                 // Блоки сгенерированы (ландшафт), но деревьев/декораций еще нет
-    PopulationInProgress, // Деревья выращены, структуры на месте (требует соседей в состоянии >= Proto)
-    Populated,            // Деревья выращены, структуры на месте (требует соседей в состоянии >= Proto)
-    LightningInProgress,  // Свет (BFS) рассчитан (требует соседей в состоянии >= Populated)
-    Lighted,              // Свет (BFS) рассчитан (требует соседей в состоянии >= Populated)
-    MeshingInProgress,    // Сетка построена и готова к рендеру (требует соседей в состоянии >= Lighted)
-    Meshed,               // Сетка построена и готова к рендеру (требует соседей в состоянии >= Lighted)
+    Bare,
+    PopulationInProgress,
+    Populated,
+    LightningInProgress,
+    Lighted,
+    MeshingInProgress,
+    Meshed,
 }
 
 #[derive(Debug, Clone)]
@@ -263,8 +220,7 @@ impl<C: ChunkCache> ChunkManager<C> {
     // pub fn stages_mut(&mut self) -> impl Iterator<Item = (IPoint2D, &mut
     // ChunkStage)> {   self.stages.iter_mut().map(|(&key, stage)| (key, stage))
     // }
-
-    pub fn neighbours_at_least(&self, origin: IPoint2D, stage: ChunkStage) -> bool {
+    pub fn neighbours_of(&self, origin: IPoint2D) -> impl Iterator<Item = IPoint2D> {
         [
             IPoint2D::new(-1, 0),  // left
             IPoint2D::new(1, 0),   // right
@@ -276,7 +232,12 @@ impl<C: ChunkCache> ChunkManager<C> {
             IPoint2D::new(1, -1),  // bottom right
         ]
         .into_iter()
-        .all(|offset| self.stages.get(&(origin + offset.to_vector())).is_none_or(|&chunk_stage| chunk_stage >= stage))
+        .map(move |offset| origin + offset.to_vector())
+    }
+
+    pub fn neighbours_at_least(&self, origin: IPoint2D, stage: ChunkStage) -> bool {
+        self.neighbours_of(origin)
+            .all(|inner_origin| self.stages.get(&inner_origin).is_some_and(|&chunk_stage| chunk_stage >= stage))
     }
 
     pub fn update_neighbors(&mut self, center_origin: IPoint2D, modified_neighbors: [Option<Chunk>; 8], stage: ChunkStage) {
@@ -544,7 +505,7 @@ impl<C: ChunkCache> ChunkManager<C> {
     }
 }
 
-impl<C: ChunkCache> ChunkManagerLike for ChunkManager<C> {
+impl<C: ChunkCache> ChunkAccess for ChunkManager<C> {
     fn get_chunk(&self, position: IPoint2D) -> Option<&Chunk> {
         self.chunks.get(&position)
     }
@@ -637,5 +598,50 @@ impl<C: ChunkCache> Index<IPoint2D> for ChunkManager<C> {
 impl<C: ChunkCache> IndexMut<IPoint2D> for ChunkManager<C> {
     fn index_mut(&mut self, index: IPoint2D) -> &mut Self::Output {
         self.chunks.get_mut(&index).unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use meralus_shared::IPoint2D;
+
+    use crate::{Chunk, ChunkAccess, ChunkManager, ChunkStage};
+
+    #[test]
+    fn test_local_chunk_manager() {
+        let inner = || {
+            let mut chunk_manager = ChunkManager::default();
+
+            chunk_manager.push(Chunk::filled(0).with_origin(IPoint2D::ZERO), ChunkStage::Bare);
+            chunk_manager.push(Chunk::filled(1).with_origin(IPoint2D::NEG_X), ChunkStage::Bare);
+            chunk_manager.push(Chunk::filled(2).with_origin(IPoint2D::X), ChunkStage::Bare);
+            chunk_manager.push(Chunk::filled(3).with_origin(IPoint2D::Y), ChunkStage::Bare);
+            chunk_manager.push(Chunk::filled(4).with_origin(IPoint2D::NEG_Y), ChunkStage::Bare);
+            chunk_manager.push(Chunk::filled(5).with_origin(IPoint2D::NEG_ONE), ChunkStage::Bare);
+            chunk_manager.push(Chunk::filled(6).with_origin(IPoint2D::ONE), ChunkStage::Bare);
+
+            let chunks = [
+                Chunk::filled(0).with_origin(IPoint2D::ZERO),    // center
+                Chunk::filled(1).with_origin(IPoint2D::NEG_X),   // left
+                Chunk::filled(2).with_origin(IPoint2D::X),       // right
+                Chunk::filled(3).with_origin(IPoint2D::Y),       // top
+                Chunk::filled(4).with_origin(IPoint2D::NEG_Y),   // bottom
+                Chunk::filled(5).with_origin(IPoint2D::NEG_ONE), // left_bottom
+                Chunk::filled(6).with_origin(IPoint2D::ONE),     // right_top
+            ];
+
+            let chunk_manager = chunk_manager.local_of(IPoint2D::ZERO)?;
+
+            for chunk in chunks {
+                assert_eq!(chunk_manager.get_chunk(chunk.origin), Some(&chunk));
+            }
+
+            Some(())
+        };
+
+        match inner() {
+            Some(()) => (),
+            None => panic!("test failed"),
+        }
     }
 }

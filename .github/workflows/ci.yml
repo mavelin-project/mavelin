@@ -21,7 +21,7 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Check
+      - name: clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: rustfmt
         run: cargo fmt --all --check

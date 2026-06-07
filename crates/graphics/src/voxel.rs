@@ -80,10 +80,21 @@ impl SubchunkState {
     }
 }
 
+struct SubchunkSlice {
+    solid_start: u32,
+    solid_count: u32,
+
+    translucent_start: u32,
+    translucent_count: u32,
+}
+
 struct RenderChunk {
     subchunk_states: [SubchunkState; SUBCHUNK_COUNT],
+    subchunk_slices: [SubchunkSlice; SUBCHUNK_COUNT],
     solid_buffer: CachedBuffers<VoxelVertex, u32>,
+    solid_indices: Vec<u32>,
     translucent_buffer: CachedBuffers<VoxelVertex, u32>,
+    translucent_indices: Vec<u32>,
 }
 
 pub struct VoxelMeshBuilder {
@@ -390,59 +401,127 @@ impl VoxelRenderer {
                         let entry = entry.get_mut();
 
                         if entry.subchunk_states != subchunk_states {
-                            let mut solid_faces = Vec::with_capacity(rendered_subchunks * SUBCHUNK_SIZE * SUBCHUNK_SIZE * SUBCHUNK_SIZE * 6);
-                            let mut translucent_faces = Vec::with_capacity(rendered_subchunks * SUBCHUNK_SIZE * SUBCHUNK_SIZE * SUBCHUNK_SIZE * 6);
+                            let mut new_solid_indices = Vec::new();
+                            let mut new_translucent_indices = Vec::new();
 
                             // generate chunk rendering data if any of subchunks are dirty or now visible
-                            for (state, subchunk) in subchunk_states.iter().zip(subchunks) {
+                            for (state, subchunk) in subchunk_states.iter().zip(&entry.subchunk_slices) {
                                 if state.is_rendered() {
-                                    solid_faces.extend_from_slice(&subchunk[0]);
-                                    translucent_faces.extend_from_slice(&subchunk[1]);
+                                    let start = subchunk.solid_start * 6;
+
+                                    new_solid_indices.extend_from_slice(&entry.solid_indices[start as usize..(start + subchunk.solid_count * 6) as usize]);
+
+                                    let start = subchunk.translucent_start * 6;
+
+                                    new_translucent_indices
+                                        .extend_from_slice(&entry.translucent_indices[start as usize..(start + subchunk.translucent_count * 6) as usize]);
                                 }
                             }
 
-                            solid_faces.sort_unstable_by(|a, b| a.cmp(camera_pos, b));
-                            translucent_faces.sort_unstable_by(|a, b| a.cmp(camera_pos, b).reverse());
+                            entry.subchunk_states = subchunk_states;
+                            entry.solid_buffer.indices = IndexBuffer::new(&self.display, PrimitiveType::TrianglesList, &new_solid_indices).unwrap();
+                            entry.translucent_buffer.indices = IndexBuffer::new(&self.display, PrimitiveType::TrianglesList, &new_translucent_indices).unwrap();
 
-                            let solid_voxels = Self::get_voxels_mesh(&solid_faces);
-                            let translucent_voxels = Self::get_voxels_mesh(&translucent_faces);
+                            // let mut solid_faces =
+                            // Vec::with_capacity(rendered_subchunks *
+                            // SUBCHUNK_SIZE * SUBCHUNK_SIZE * SUBCHUNK_SIZE *
+                            // 6);
+                            // let mut translucent_faces =
+                            // Vec::with_capacity(rendered_subchunks *
+                            // SUBCHUNK_SIZE * SUBCHUNK_SIZE * SUBCHUNK_SIZE *
+                            // 6);
 
-                            *entry = RenderChunk {
-                                subchunk_states,
-                                solid_buffer: CachedBuffers::new(&self.display, &solid_voxels.0, PrimitiveType::TrianglesList, &solid_voxels.1).unwrap(),
-                                translucent_buffer: CachedBuffers::new(
-                                    &self.display,
-                                    &translucent_voxels.0,
-                                    PrimitiveType::TrianglesList,
-                                    &translucent_voxels.1,
-                                )
-                                .unwrap(),
-                            };
+                            // // generate chunk rendering data if any of
+                            // subchunks are dirty or now visible
+                            // for (state, subchunk) in
+                            // subchunk_states.iter().zip(subchunks) {
+                            //     if state.is_rendered() {
+                            //         solid_faces.extend_from_slice(&
+                            // subchunk[0]);
+                            //         translucent_faces.extend_from_slice(&
+                            // subchunk[1]);     }
+                            // }
+
+                            // translucent_faces.sort_unstable_by(|a, b|
+                            // a.cmp(camera_pos, b).reverse());
+
+                            // let solid_voxels =
+                            // Self::get_voxels_mesh(&solid_faces);
+                            // let translucent_voxels =
+                            // Self::get_voxels_mesh(&translucent_faces);
+
+                            // *entry = RenderChunk {
+                            //     subchunk_states,
+                            //     solid_buffer:
+                            // CachedBuffers::new(&self.display,
+                            // &solid_voxels.0, PrimitiveType::TrianglesList,
+                            // &solid_voxels.1).unwrap(),
+                            //     translucent_buffer: CachedBuffers::new(
+                            //         &self.display,
+                            //         &translucent_voxels.0,
+                            //         PrimitiveType::TrianglesList,
+                            //         &translucent_voxels.1,
+                            //     )
+                            //     .unwrap(),
+                            // };
                         }
                     }
                     indexmap::map::Entry::Vacant(entry) => {
+                        let mut subchunk_slices = array::from_fn(|_| SubchunkSlice {
+                            solid_start: 0,
+                            solid_count: 0,
+                            translucent_start: 0,
+                            translucent_count: 0,
+                        });
+
                         let mut solid_faces = Vec::with_capacity(rendered_subchunks * SUBCHUNK_SIZE * SUBCHUNK_SIZE * SUBCHUNK_SIZE * 6);
                         let mut translucent_faces = Vec::with_capacity(rendered_subchunks * SUBCHUNK_SIZE * SUBCHUNK_SIZE * SUBCHUNK_SIZE * 6);
 
+                        for (subchunk_idx, subchunk) in subchunks.iter_mut().enumerate() {
+                            subchunk_slices[subchunk_idx].solid_start = solid_faces.len() as u32;
+                            subchunk_slices[subchunk_idx].solid_count = subchunk[0].len() as u32;
+                            subchunk_slices[subchunk_idx].translucent_start = translucent_faces.len() as u32;
+                            subchunk_slices[subchunk_idx].translucent_count = subchunk[1].len() as u32;
+
+                            solid_faces.extend_from_slice(&subchunk[0]);
+                            translucent_faces.extend_from_slice(&subchunk[1]);
+                        }
+
+                        let (solid_vertices, solid_indices) = Self::get_voxels_mesh(&solid_faces);
+                        let (translucent_vertices, translucent_indices) = Self::get_voxels_mesh(&translucent_faces);
+
+                        let mut new_solid_indices = Vec::new();
+                        let mut new_translucent_indices = Vec::new();
+
                         // generate chunk rendering data if any of subchunks are dirty or now visible
-                        for (state, subchunk) in subchunk_states.iter().zip(subchunks) {
+                        for (state, subchunk) in subchunk_states.iter().zip(&subchunk_slices) {
                             if state.is_rendered() {
-                                solid_faces.extend_from_slice(&subchunk[0]);
-                                translucent_faces.extend_from_slice(&subchunk[1]);
+                                let start = subchunk.solid_start * 6;
+
+                                new_solid_indices.extend_from_slice(&solid_indices[start as usize..(start + subchunk.solid_count * 6) as usize]);
+
+                                let start = subchunk.translucent_start * 6;
+
+                                new_translucent_indices
+                                    .extend_from_slice(&translucent_indices[start as usize..(start + subchunk.translucent_count * 6) as usize]);
                             }
                         }
 
-                        solid_faces.sort_unstable_by(|a, b| a.cmp(camera_pos, b));
-                        translucent_faces.sort_unstable_by(|a, b| a.cmp(camera_pos, b).reverse());
-
-                        let solid_voxels = Self::get_voxels_mesh(&solid_faces);
-                        let translucent_voxels = Self::get_voxels_mesh(&translucent_faces);
+                        // translucent_faces.sort_unstable_by(|a, b| a.cmp(camera_pos, b).reverse());
 
                         entry.insert(RenderChunk {
                             subchunk_states,
-                            solid_buffer: CachedBuffers::new(&self.display, &solid_voxels.0, PrimitiveType::TrianglesList, &solid_voxels.1).unwrap(),
-                            translucent_buffer: CachedBuffers::new(&self.display, &translucent_voxels.0, PrimitiveType::TrianglesList, &translucent_voxels.1)
-                                .unwrap(),
+                            subchunk_slices,
+                            solid_buffer: CachedBuffers::new(&self.display, &solid_vertices, PrimitiveType::TrianglesList, &new_solid_indices).unwrap(),
+                            solid_indices,
+                            translucent_buffer: CachedBuffers::new(
+                                &self.display,
+                                &translucent_vertices,
+                                PrimitiveType::TrianglesList,
+                                &new_translucent_indices,
+                            )
+                            .unwrap(),
+                            translucent_indices,
                         });
                     }
                 }
@@ -461,9 +540,11 @@ impl VoxelRenderer {
 
         self.draw_calls = 0;
 
+        let camera_pos = ChunkManager::<()>::to_local(camera_pos.as_());
+
         self.rendered_chunks.sort_unstable_by(|&a, _, &b, _| {
-            let a = (ChunkManager::<()>::to_local(camera_pos.as_()) - a).as_::<f32>().length_squared();
-            let b = (ChunkManager::<()>::to_local(camera_pos.as_()) - b).as_::<f32>().length_squared();
+            let a = (camera_pos - a).as_::<f32>().length_squared();
+            let b = (camera_pos - b).as_::<f32>().length_squared();
 
             a.total_cmp(&b)
         });
@@ -478,9 +559,7 @@ impl VoxelRenderer {
             }
         }
 
-        self.rendered_chunks.reverse();
-
-        for chunk in self.rendered_chunks.values() {
+        for chunk in self.rendered_chunks.values().rev() {
             if chunk.translucent_buffer.vertices.len() > 0 {
                 frame
                     .draw(

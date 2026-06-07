@@ -54,7 +54,7 @@ use meralus_shared::{
     Vector2D, Vector3D,
 };
 use meralus_storage::{Block, ResourceStorage, TextureStorage};
-use meralus_world::{BfsLight, BlockSource, Chunk, ChunkCache, ChunkManager, ChunkManagerLike, LightNode, SUBCHUNK_COUNT, SUBCHUNK_SIZE};
+use meralus_world::{BfsLight, BlockSource, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, SUBCHUNK_COUNT, SUBCHUNK_SIZE};
 use tracing::info;
 
 use crate::{
@@ -648,7 +648,7 @@ impl State for GameLoop {
                 world.tick(self.debugging.time_paused);
             }
 
-            world.update(self.common_renderer.white_pixel_uv(), &mut self.debugging);
+            world.update();
         }
 
         if self.accel >= const { Duration::from_secs(5) } {
@@ -707,6 +707,13 @@ impl State for GameLoop {
 
         if self.input.keyboard.is_key_pressed_once(KeyCode::KeyT) {
             self.debugging.wireframe = !self.debugging.wireframe;
+
+            if let Some(world) = &self.world {
+                println!(
+                    "Point3 {{ x: -48, y: 72, z: 143 }} sky light: {:?}",
+                    world.chunk_manager.get_sky_light(IPoint3D { x: -48, y: 72, z: 143 })
+                );
+            }
         }
 
         if self.input.keyboard.is_key_pressed_once(KeyCode::KeyV) {
@@ -811,11 +818,12 @@ impl State for GameLoop {
         if let Ok(action) = self.action_receiver.try_recv() {
             match action {
                 Action::UpdateSubChunkMesh(origin, subchunk_idx) => {
-                    if let Some(world) = self.world.as_mut()
-                        && let Some(subchunk) = world.compute_subchunk_mesh_at((origin, subchunk_idx))
-                    {
-                        world.voxel_renderer.set_subchunk((origin, subchunk_idx), subchunk);
-                    }
+                    // if let Some(world) = self.world.as_mut()
+                    //     && let Some(subchunk) =
+                    // world.compute_subchunk_mesh_at((origin,
+                    // subchunk_idx)) {
+                    //     world.voxel_renderer.set_subchunk((origin,
+                    // subchunk_idx), subchunk); }
                 }
                 Action::RemoveBlock(chunk, position) => {
                     if let Some(world) = self.world.as_mut() {
@@ -1216,10 +1224,11 @@ Rendered vertices: {vertices}",
                                 .resource_manager
                                 .get_block(block.into())
                                 .map(|block| format!(
-                                    "{} (at {}, sky light: {})",
+                                    "{} (at {}, sky light: {} for {:?})",
                                     block.id(),
                                     result.hit_side,
-                                    world.chunk_manager.get_sky_light(result.position + result.hit_side.as_normal())
+                                    world.chunk_manager.get_sky_light(result.position + result.hit_side.as_normal()),
+                                    result.position + result.hit_side.as_normal()
                                 )))
                         )
                         .unwrap_or_else(|| String::from("nothing")),
@@ -1321,6 +1330,59 @@ Rendered vertices: {vertices}",
                         None,
                     );
                 }
+
+                const CHUNK_UI_CONTAINER_SIZE: Size2D = Size2D::new(128.0, 128.0);
+                const CHUNK_UI_COUNT: usize = 16;
+                const CHUNK_UI_SIZE: Size2D = Size2D::new(
+                    CHUNK_UI_CONTAINER_SIZE.width / CHUNK_UI_COUNT as f32,
+                    CHUNK_UI_CONTAINER_SIZE.height / CHUNK_UI_COUNT as f32,
+                );
+
+                context.clipped_bounds(
+                    Rect2D::new(
+                        Point2D::new(bounds.size.width - CHUNK_UI_CONTAINER_SIZE.width - 12.0, 12.0),
+                        CHUNK_UI_CONTAINER_SIZE,
+                    ),
+                    |context, bounds| {
+                        context.fill(Color::BLACK);
+
+                        let player_chunk = ChunkManager::<()>::to_local(world.player.body.position.as_::<i32>());
+                        let player_offset = Point2D::new(world.player.body.position.x % 16.0, world.player.body.position.z % 16.0);
+                        let origin = bounds.origin + bounds.size.to_vector() / 2.0;
+
+                        for x in -1..(CHUNK_UI_COUNT + 1) as i32 {
+                            let x = x - (CHUNK_UI_COUNT / 2) as i32;
+
+                            for z in -1..(CHUNK_UI_COUNT + 1) as i32 {
+                                let z = z - (CHUNK_UI_COUNT / 2) as i32;
+                                let chunk = player_chunk + IPoint2D::new(x, z).to_vector();
+
+                                if let Some(stage) = world.chunk_manager.stages.get(&chunk) {
+                                    let color = match stage {
+                                        ChunkStage::Unloaded => continue,
+                                        ChunkStage::Bare => Color::new(150, 150, 150, 255),
+                                        ChunkStage::PopulationInProgress => Color::from_u32_rgb(0x73AF73),
+                                        ChunkStage::Populated => Color::GREEN,
+                                        ChunkStage::LightningInProgress => Color::from_u32_rgb(0xB8FF00),
+                                        ChunkStage::Lighted => Color::YELLOW,
+                                        ChunkStage::MeshingInProgress => Color::from_u32_rgb(0x63639C),
+                                        ChunkStage::Meshed => Color::BLUE,
+                                    };
+
+                                    context.draw_rect(
+                                        Rect2D::new(
+                                            origin - player_offset.to_vector() + Vector2D::new(x as f32 * CHUNK_UI_SIZE.width, z as f32 * CHUNK_UI_SIZE.height),
+                                            CHUNK_UI_SIZE,
+                                        ),
+                                        color,
+                                    );
+                                }
+                            }
+                        }
+
+                        context.draw_rect(Rect2D::new(origin - Vector2D::splat(1.0), Size2D::splat(2.0)), Color::RED);
+                    },
+                );
             });
 
             self.debugging.render_info.extend(&context.finish(display, &mut frame));
@@ -1419,7 +1481,8 @@ Rendered vertices: {vertices}",
                             world.entities.spawn_model(Point3D::new(32.0, 128.0, 0.0), 1);
                             // let action_sender = self.action_sender.clone();
 
-                            world.start_world_generation(128);
+                            world.seed = 128;
+                            // world.start_world_generation(128);
 
                             // let Client(mut receiver, mut sender) =
                             //     Client::new(TcpStream::from_std(std::net::TcpStream::connect(self.args.
