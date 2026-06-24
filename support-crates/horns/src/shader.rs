@@ -13,6 +13,7 @@ pub struct Program {
 }
 
 pub enum UniformValue<'a> {
+    Boolean(bool),
     I32(i32),
     I32x2([i32; 2]),
     I32x3([i32; 3]),
@@ -39,25 +40,27 @@ macro_rules! uniform_values {
 }
 
 uniform_values! {
-    [i32               => I32    ](value): value,
-    [[i32; 2]          => I32x2  ](value): value,
-    [[i32; 3]          => I32x3  ](value): value,
-    [[i32; 4]          => I32x4  ](value): value,
-    [f32               => F32    ](value): value,
-    [[f32; 2]          => F32x2  ](value): value,
-    [[f32; 3]          => F32x3  ](value): value,
-    [[f32; 4]          => F32x4  ](value): value,
-    [[f32; 9]          => Mat3x3 ](value): value,
-    [[f32; 16]         => Mat4x4 ](value): value,
-    [glam::IVec2       => I32x2  ](value): value.to_array(),
-    [glam::IVec3       => I32x3  ](value): value.to_array(),
-    [glam::IVec4       => I32x4  ](value): value.to_array(),
-    [glam::Vec2        => F32x2  ](value): value.to_array(),
-    [glam::Vec3        => F32x3  ](value): value.to_array(),
-    [glam::Vec4        => F32x4  ](value): value.to_array(),
-    [glam::Mat3        => Mat3x3 ](value): value.to_cols_array(),
-    [glam::Mat4        => Mat4x4 ](value): value.to_cols_array(),
-    [&'a crate::Texture2d  => Texture](value): &value.ptr
+    [bool                         => Boolean](value): value,
+    [i32                          => I32    ](value): value,
+    [[i32; 2]                     => I32x2  ](value): value,
+    [[i32; 3]                     => I32x3  ](value): value,
+    [[i32; 4]                     => I32x4  ](value): value,
+    [f32                          => F32    ](value): value,
+    [[f32; 2]                     => F32x2  ](value): value,
+    [[f32; 3]                     => F32x3  ](value): value,
+    [[f32; 4]                     => F32x4  ](value): value,
+    [[f32; 9]                     => Mat3x3 ](value): value,
+    [[f32; 16]                    => Mat4x4 ](value): value,
+    [glam::IVec2                  => I32x2  ](value): value.to_array(),
+    [glam::IVec3                  => I32x3  ](value): value.to_array(),
+    [glam::IVec4                  => I32x4  ](value): value.to_array(),
+    [glam::Vec2                   => F32x2  ](value): value.to_array(),
+    [glam::Vec3                   => F32x3  ](value): value.to_array(),
+    [glam::Vec4                   => F32x4  ](value): value.to_array(),
+    [glam::Mat3                   => Mat3x3 ](value): value.to_cols_array(),
+    [glam::Mat4                   => Mat4x4 ](value): value.to_cols_array(),
+    [crate::SampledTexture2d<'a>  => Texture](value): &value.texture.ptr,
+    [&'a crate::Texture2d         => Texture](value): &value.ptr
 }
 
 pub struct ProgramBinder<'a> {
@@ -66,13 +69,13 @@ pub struct ProgramBinder<'a> {
 }
 
 impl ProgramBinder<'_> {
-    #[must_use]
     pub fn with_uniform<'a, N: AsRef<str>, V: Into<UniformValue<'a>>>(mut self, name: N, value: V) -> Self {
         if let Some(location) = self.program.uniforms.get(name.as_ref()) {
             let location = Some(location);
 
             unsafe {
                 match value.into() {
+                    UniformValue::Boolean(x) => self.program.gl.uniform_1_i32(location, x.into()),
                     UniformValue::I32(x) => self.program.gl.uniform_1_i32(location, x),
                     UniformValue::I32x2([x, y]) => self.program.gl.uniform_2_i32(location, x, y),
                     UniformValue::I32x3([x, y, z]) => self.program.gl.uniform_3_i32(location, x, y, z),

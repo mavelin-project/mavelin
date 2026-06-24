@@ -1,18 +1,20 @@
 use std::time::Duration;
 
-use meralus_animation::TypedTransition;
-use meralus_graphics::{Arrangement, Rect2DExt, RenderContext, RowStrategy, UiSubcontext};
 use meralus_shared::{Color, Size2D, Vector2D};
+use meralus_tween::{Animation, Tween};
 
-use crate::scenes::Screen;
+use crate::{
+    render::context::{Arrangement, RowStrategy, UiSubcontext},
+    scenes::Screen,
+};
 
 pub struct LoadingOverlay {
-    pub progress: TypedTransition<f32>,
+    pub progress: Tween<f32>,
 }
 
 impl Screen for LoadingOverlay {
     fn update(&mut self, delta: Duration) {
-        self.progress.advance(delta.as_secs_f32());
+        self.progress.advance(delta);
     }
 
     fn draw(&self, scope: &mut UiSubcontext<'_, RowStrategy, RowStrategy>) {
@@ -35,7 +37,7 @@ impl Screen for LoadingOverlay {
 
                 let size = scope.parent_size();
 
-                scope.rect(Size2D::new(size.width * 0.4 * *self.progress.get(), 32.0), Color::RED);
+                scope.rect(Size2D::new(size.x * 0.4 * *self.progress.get(), 32.0), Color::RED);
             })
         });
     }

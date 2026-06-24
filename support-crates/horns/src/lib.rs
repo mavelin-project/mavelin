@@ -10,9 +10,9 @@ pub use self::{
     backend::RenderBackend,
     error::Error,
     index_buffer::{ElementType, GlPrimitive, IndexBuffer},
-    render_pass::RenderPass,
+    render_pass::{BackfaceCullingMode, Blend, BlendingFactor, Depth, DepthTest, DrawParams, RenderPass},
     shader::{Program, ProgramBinder, Shader, UniformValue},
-    texture::{Texture2d, WritableTexture2d},
+    texture::{MagnifyFilter, MinifyFilter, SampledTexture2d, Texture2d, WritableTexture2d},
     vertex_buffer::{Vertex, VertexBuffer},
 };
 

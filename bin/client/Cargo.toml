@@ -13,7 +13,7 @@ meralus-addons = { workspace = true, optional = true }
 meralus-engine.workspace = true
 meralus-network = { workspace = true, optional = true }
 meralus-physics.workspace = true
-meralus-shared.workspace = true
+meralus-shared = { workspace = true, features = ["convert", "color", "frustum", "face", "geometry"] }
 meralus-storage.workspace = true
 meralus-tween.workspace = true
 meralus-world.workspace = true
@@ -34,6 +34,12 @@ tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
 tracy-client = { version = "0.18.4", features = ["demangle"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
+indexmap = "2.14.0"
+image.workspace = true
+lyon_tessellation = "1.0.20"
+meck.workspace = true
+swash = "0.2.9"
+euclid = { version = "0.22.14", features = ["bytemuck"] }
 
 [lints]
 workspace = true

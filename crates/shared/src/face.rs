@@ -45,6 +45,8 @@ impl Face {
         BVec3::new(false, true, false),  // 6 LEFT  TOP    BACK
         BVec3::new(true, true, false),   // 7 RIGHT TOP    BACK
     ];
+    #[cfg(feature = "geometry")]
+    pub const NORMALS: [IPoint3D; 6] = [IPoint3D::NEG_Y, IPoint3D::Y, IPoint3D::NEG_X, IPoint3D::X, IPoint3D::Z, IPoint3D::NEG_Z];
 
     #[inline]
     pub const fn get_light_level(self) -> f32 {
@@ -163,9 +165,7 @@ impl Face {
     #[inline]
     #[cfg(feature = "geometry")]
     pub const fn as_normal(self) -> IPoint3D {
-        const NORMALS: [IPoint3D; 6] = [IPoint3D::NEG_Y, IPoint3D::Y, IPoint3D::NEG_X, IPoint3D::X, IPoint3D::Z, IPoint3D::NEG_Z];
-
-        NORMALS[self.normal_index()]
+        Self::NORMALS[self.normal_index()]
     }
 
     #[inline]

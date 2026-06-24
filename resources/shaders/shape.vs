@@ -2,7 +2,7 @@
 
 in vec3 position;
 in vec2 uv;
-in vec4 color;
+in uvec4 color;
 in vec4 clip;
 
 out vec2 v_uv;

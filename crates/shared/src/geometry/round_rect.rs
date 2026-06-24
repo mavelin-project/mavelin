@@ -1,7 +1,7 @@
 use super::{Box2D, Point2D, Rect, Size2D, Thickness};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RRect2D {
+pub struct RRect {
     /// Coordinates of the rectangle.
     pub origin: Point2D,
     /// Size of the rectangle.
@@ -10,7 +10,7 @@ pub struct RRect2D {
     pub corner_radius: Thickness,
 }
 
-impl RRect2D {
+impl RRect {
     pub const EMPTY: Self = Self {
         origin: Point2D::ZERO,
         size: Size2D::ZERO,

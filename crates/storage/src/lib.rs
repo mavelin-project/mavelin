@@ -79,7 +79,6 @@ impl ResourceStorage {
 
             self.blocks.register(format!("{mapping}:{id}"), block, model);
         }
-
     }
 
     pub fn load_entity_model<T: AsRef<str>>(&mut self, mapping: &str, id: T) -> usize {

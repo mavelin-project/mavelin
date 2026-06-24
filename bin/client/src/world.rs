@@ -6,6 +6,7 @@ use std::{
 };
 
 use ahash::{HashMap, HashSet};
+use horns::RenderBackend;
 #[cfg(feature = "multiplayer")]
 use meralus_network::{IncomingPacket, OutgoingPacket, Uuid};
 use meralus_physics::{PhysicsBody, PhysicsContext};
@@ -16,12 +17,21 @@ use meralus_world::{
     BfsLight, CHUNK_HEIGHT, CHUNK_HEIGHT_F32, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, LocalChunkManager, SUBCHUNK_COUNT,
     SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32,
 };
+use meralus_worldgen::ChunkGenerator;
 use tracing::info;
 use tracy_client::{set_thread_name, span};
 
 use crate::{
     AabbProvider, Camera, FIXED_FRAMERATE, GraphicsSettings, INVENTORY_HOTBAR_SLOTS, Interval, Item, LimitedAabbProvider, PlayerController, ResourceStorage,
-    TICK_RATE, TPS, clock::Clock, cube_outline, input::Input, player::ItemType,
+    TICK_RATE, TPS,
+    clock::Clock,
+    cube_outline,
+    input::Input,
+    player::ItemType,
+    render::{
+        chunk::{ChunkRenderer, VoxelFace, VoxelMeshBuilder},
+        common::CommonVertex,
+    },
 };
 
 const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.4, 0.75);
@@ -461,7 +471,7 @@ pub struct World {
 
     pub chunk_manager: ChunkManager<ChunkFileCache>,
     pub job_manager: JobManager,
-    pub voxel_renderer: VoxelRenderer,
+    pub chunk_renderer: ChunkRenderer,
 
     pub current_weather: Weather,
 
@@ -477,7 +487,7 @@ pub struct World {
 }
 
 impl World {
-    pub fn new(display: &WindowDisplay, resource_storage: Arc<ResourceStorage>, chunk_manager: ChunkManager<ChunkFileCache>, ty: WorldType) -> Self {
+    pub fn new(backend: &RenderBackend, resource_storage: Arc<ResourceStorage>, chunk_manager: ChunkManager<ChunkFileCache>, ty: WorldType) -> Self {
         let mut player = PlayerController::default();
 
         player.body.position = Point3D::new(2.0, 135.0, 2.0);
@@ -487,7 +497,7 @@ impl World {
             ticks: 0,
             tick_sum: 0,
             current_tick: 0,
-            voxel_renderer: VoxelRenderer::new(display),
+            chunk_renderer: ChunkRenderer::new(backend),
             tick_interval: Interval::new(TICK_RATE),
             player,
             player_controllable: false,
@@ -697,16 +707,28 @@ impl World {
                     self.chunk_manager.set_stage(origin, ChunkStage::Meshed);
 
                     for (subchunk_idx, mesh) in mesh.into_iter().rev().enumerate() {
-                        self.voxel_renderer.set_subchunk((origin, subchunk_idx), mesh);
+                        self.chunk_renderer.set_subchunk((origin, subchunk_idx), mesh);
                     }
                 }
             }
         }
 
         let mut queue = Vec::new();
+        let origin = ChunkManager::<()>::to_local(self.player.body.position.as_ivec3());
+        let mut chunks = (-10..10)
+            .flat_map(|x| (-10..10).map(move |z| origin + IPoint2D::new(x, z)))
+            .filter(|origin| self.chunk_manager.stages.get(origin).is_some())
+            .collect::<Vec<_>>();
 
-        for (&origin, &stage) in &self.chunk_manager.stages {
-            match stage {
+        chunks.sort_unstable_by(|a, b| {
+            origin
+                .as_vec2()
+                .distance_squared(a.as_vec2())
+                .total_cmp(&origin.as_vec2().distance_squared(b.as_vec2()))
+        });
+
+        for origin in chunks {
+            match unsafe { self.chunk_manager.stages.get(&origin).unwrap_unchecked() } {
                 ChunkStage::Bare
                     if self.chunk_manager.neighbours_at_least(origin, ChunkStage::Bare)
                         && !self.job_manager.jobs.contains(&origin)
@@ -932,7 +954,7 @@ impl<'a, C: ChunkAccess> WorldSnapshot<'a, C> {
 
                             if model_face.is_opaque { &mut voxels[0] } else { &mut voxels[1] }.push(VoxelFace {
                                 vertices,
-                                position: world_position.as_(),
+                                position: world_position.as_vec3(),
                                 lights,
                                 uvs,
                                 color: (if model_face.tint { tint_color.unwrap_or(Color::WHITE) } else { Color::WHITE })

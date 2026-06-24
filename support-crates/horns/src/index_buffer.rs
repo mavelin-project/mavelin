@@ -71,6 +71,14 @@ impl<I: GlPrimitive> IndexBuffer<I> {
         }
     }
 
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn bind(&self) {
         unsafe {
             self.gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.ptr));

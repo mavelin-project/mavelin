@@ -1,19 +1,29 @@
 use std::{array, borrow::Borrow, collections::hash_map::Entry, hash::Hash};
 
 use ahash::{HashMap, HashMapExt};
-use horns::impl_vertex;
+use horns::{
+    BackfaceCullingMode, Blend, BlendingFactor, Depth, DepthTest, DrawParams, ElementType, IndexBuffer, Program, RenderBackend, RenderPass, SampledTexture2d,
+    Shader, VertexBuffer, impl_vertex,
+};
 use indexmap::IndexMap;
-use meralus_shared::{AsValue, Color, Frustum, FrustumCulling, IPoint2D, Point2D, Point3D, Transform3D};
+use meralus_shared::{AsValue, Color, FromValue, Frustum, FrustumCulling, IPoint2D, Point2D, Point3D, Transform3D};
 use meralus_world::{ChunkManager, SUBCHUNK_COUNT, SUBCHUNK_COUNT_F32, SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32};
 
-use super::Shader;
-use crate::{BLENDING, CachedBuffers, RenderInfo, impl_vertex};
+use crate::{
+    get_sky_color,
+    render::{RenderBuffer, context::RenderInfo},
+};
 
 struct VoxelShader;
 
 impl Shader for VoxelShader {
-    const FRAGMENT: &str = "./resources/shaders/voxel.fs";
-    const VERTEX: &str = "./resources/shaders/voxel.vs";
+    fn fragment(&self) -> String {
+        std::fs::read_to_string("./resources/shaders/voxel.fs").unwrap()
+    }
+
+    fn vertex(&self) -> String {
+        std::fs::read_to_string("./resources/shaders/voxel.vs").unwrap()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,22 +49,18 @@ pub struct VoxelVertex {
     pub position: Point3D,
     pub uv: Point2D,
     pub color: [u8; 4],
-    pub light: u8,
-    pub visible: i8,
+    pub light: u32,
 }
 
 impl_vertex! {
     VoxelVertex {
-        visible: [i8; 1],
-        light: [u8; 1],
-        color: [u8; 4],
+        position: [f32; 3],
         uv: [f32; 2],
-        position: [f32; 3]
+        color: [u8; 4],
+        light: [u32; 1]
     }
 }
 
-pub type SubChunkKey = (IPoint2D, usize);
-pub type SubChunkMesh = [(Vec<VoxelVertex>, Vec<u32>); 2];
 pub type WorldMesh = HashMap<IPoint2D, [[Vec<VoxelFace>; 2]; SUBCHUNK_COUNT]>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,9 +91,9 @@ struct SubchunkSlice {
 struct RenderChunk {
     subchunk_states: [SubchunkState; SUBCHUNK_COUNT],
     subchunk_slices: [SubchunkSlice; SUBCHUNK_COUNT],
-    solid_buffer: CachedBuffers<VoxelVertex, u32>,
+    solid_buffer: RenderBuffer<VoxelVertex, VoxelShader, u32>,
     solid_indices: Vec<u32>,
-    translucent_buffer: CachedBuffers<VoxelVertex, u32>,
+    translucent_buffer: RenderBuffer<VoxelVertex, VoxelShader, u32>,
     translucent_indices: Vec<u32>,
 }
 
@@ -119,10 +125,9 @@ impl VoxelMeshBuilder {
     pub fn push_transformed(&mut self, voxel: &VoxelFace, matrix: &Transform3D, origin: Point3D) {
         self.vertices.extend((0..4).map(|i| VoxelVertex {
             position: voxel.position + matrix.transform_point3(voxel.vertices[i] - origin) + origin,
-            light: voxel.lights[i],
+            light: voxel.lights[i] as u32,
             uv: voxel.uvs[i],
             color: voxel.color.as_value(),
-            visible: 1,
         }));
 
         self.indices
@@ -134,10 +139,9 @@ impl VoxelMeshBuilder {
     pub fn push(&mut self, voxel: &VoxelFace) {
         self.vertices.extend((0..4).map(|i| VoxelVertex {
             position: voxel.position + voxel.vertices[i],
-            light: voxel.lights[i],
+            light: voxel.lights[i] as u32,
             uv: voxel.uvs[i],
             color: voxel.color.as_value(),
-            visible: 1,
         }));
 
         self.indices
@@ -148,41 +152,41 @@ impl VoxelMeshBuilder {
 
     pub fn render_full_bright(
         self,
+        backend: &RenderBackend,
         renderer: &ChunkRenderer,
-        frame: &mut Frame,
-        wireframe: bool,
+        pass: &mut RenderPass,
         matrix: Transform3D,
-        atlas: Sampler<'_, Texture2d>,
-        lightmap: Sampler<'_, Texture2d>,
+        atlas: SampledTexture2d,
+        lightmap: SampledTexture2d,
     ) {
-        let (vertices, indices) = self.build(&renderer.display);
+        let (vertices, indices) = self.build(backend, &renderer.shader);
 
-        renderer.draw_full_bright(frame, &vertices, &indices, wireframe, matrix, atlas, lightmap);
+        renderer.draw_full_bright(pass, &vertices, &indices, matrix, atlas, lightmap);
     }
 
-    pub fn render<T: Surface>(
+    pub fn render(
         self,
+        backend: &RenderBackend,
         renderer: &ChunkRenderer,
-        frame: &mut T,
-        wireframe: bool,
+        pass: &mut RenderPass,
         matrix: Transform3D,
-        atlas: Sampler<'_, Texture2d>,
-        lightmap: Sampler<'_, Texture2d>,
+        atlas: SampledTexture2d,
+        lightmap: SampledTexture2d,
     ) {
-        let (vertices, indices) = self.build(&renderer.display);
+        let (vertices, indices) = self.build(backend, &renderer.shader);
 
-        renderer.draw(frame, &vertices, &indices, wireframe, matrix, atlas, lightmap);
+        renderer.draw(pass, &vertices, &indices, matrix, atlas, lightmap);
     }
 
-    pub fn build(self, display: &WindowDisplay) -> (VertexBuffer<VoxelVertex>, IndexBuffer<u32>) {
+    pub fn build(self, backend: &RenderBackend, shader: &Program) -> (VertexBuffer<VoxelVertex, VoxelShader>, IndexBuffer<u32>) {
         (
-            VertexBuffer::new(display, &self.vertices).unwrap(),
-            IndexBuffer::new(display, PrimitiveType::TrianglesList, &self.indices).unwrap(),
+            backend.create_vertex_buffer(&self.vertices, shader, false).unwrap(),
+            backend.create_index_buffer(ElementType::Triangles, &self.indices).unwrap(),
         )
     }
 
-    pub fn build_buffers(self, display: &WindowDisplay) -> CachedBuffers<VoxelVertex, u32> {
-        CachedBuffers::new(display, &self.vertices, PrimitiveType::TrianglesList, &self.indices).unwrap()
+    pub fn build_buffers(self, backend: &RenderBackend, shader: &Program) -> RenderBuffer<VoxelVertex, VoxelShader, u32> {
+        RenderBuffer::new(backend, &self.vertices, shader, ElementType::Triangles, &self.indices).unwrap()
     }
 }
 
@@ -193,14 +197,14 @@ pub struct ChunkRenderer {
     draw_calls: usize,
     sun_position: f32,
     rendered_chunks: IndexMap<IPoint2D, RenderChunk>,
-    display: WindowDisplay,
 }
 
 impl ChunkRenderer {
-    pub fn new(display: &WindowDisplay) -> Self {
+    pub fn new(backend: &RenderBackend) -> Self {
+        let shader = backend.create_program(&VoxelShader).unwrap();
+
         Self {
-            display: display.clone(),
-            shader: VoxelShader::program(display),
+            shader,
             world_mesh: HashMap::new(),
             vertices: 0,
             draw_calls: 0,
@@ -212,10 +216,9 @@ impl ChunkRenderer {
     pub fn push_voxel_mesh(voxel: &VoxelFace, offset: &mut u32, vertices: &mut Vec<VoxelVertex>, indices: &mut Vec<u32>) {
         vertices.extend((0..4).map(|i| VoxelVertex {
             position: voxel.position + voxel.vertices[i],
-            light: voxel.lights[i],
+            light: voxel.lights[i] as u32,
             uv: voxel.uvs[i],
             color: voxel.color.as_value(),
-            visible: 1,
         }));
 
         // 0, 1, 2, 3, 2, 1
@@ -306,76 +309,89 @@ impl ChunkRenderer {
         self.rendered_chunks.contains_key(k)
     }
 
-    pub fn draw_full_bright<'a, I: Into<IndicesSource<'a>>>(
+    pub fn draw_full_bright<'a>(
         &self,
-        frame: &mut Frame,
-        vertices: &VertexBuffer<VoxelVertex>,
-        indices: I,
-        wireframe: bool,
+        pass: &mut RenderPass,
+        vertices: &VertexBuffer<VoxelVertex, VoxelShader>,
+        indices: &IndexBuffer<u32>,
         matrix: Transform3D,
-        atlas: Sampler<'_, Texture2d>,
-        lightmap: Sampler<'_, Texture2d>,
+        atlas: SampledTexture2d,
+        lightmap: SampledTexture2d,
     ) {
-        let uniforms = uniform! {
-            sun_position: [0.0, const { (1.0 - 0.5) / 0.96 }, 0.0f32],
-            matrix: matrix.to_cols_array_2d(),
-            tex: atlas,
-            lightmap: lightmap,
-            with_tex: true,
-        };
+        self.shader
+            .bind()
+            .with_uniform("sun_position", [0.0, const { (1.0 - 0.5) / 0.96 }, 0f32])
+            .with_uniform("matrix", matrix)
+            .with_uniform("tex", atlas)
+            .with_uniform("lightmap", lightmap)
+            .with_uniform("with_tex", true)
+            .with_uniform("fog_color", <[f32; 4]>::from_value(&get_sky_color((false, 0.5), 0.0)))
+            .with_uniform("fog_env_start", 32.0)
+            .with_uniform("fog_env_end", 144.0)
+            .with_uniform("fog_render_dist_start", 112.0)
+            .with_uniform("fog_render_dist_end", 160.0);
 
-        frame
-            .draw(vertices, indices, &self.shader, &uniforms, &DrawParameters {
-                backface_culling: BackfaceCullingMode::CullCounterClockwise,
-                polygon_mode: if wireframe { PolygonMode::Line } else { PolygonMode::Fill },
-                blend: BLENDING,
-                ..DrawParameters::default()
-            })
-            .unwrap();
+        pass.apply_params(DrawParams {
+            blend: Some(Blend {
+                color: (BlendingFactor::SourceAlpha, BlendingFactor::OneMinusSourceAlpha),
+                alpha: (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),
+            }),
+            depth: None,
+            culling: Some(BackfaceCullingMode::CullCounterClockwise),
+        });
+
+        pass.draw_elements(vertices, indices);
+        pass.reset_params();
     }
 
-    pub fn draw<'a, F: Surface, I: Into<IndicesSource<'a>>>(
+    pub fn draw<'a>(
         &self,
-        frame: &mut F,
-        vertices: &VertexBuffer<VoxelVertex>,
-        indices: I,
-        wireframe: bool,
+        pass: &mut RenderPass,
+        vertices: &VertexBuffer<VoxelVertex, VoxelShader>,
+        indices: &IndexBuffer<u32>,
         matrix: Transform3D,
-        atlas: Sampler<'_, Texture2d>,
-        lightmap: Sampler<'_, Texture2d>,
+        atlas: SampledTexture2d,
+        lightmap: SampledTexture2d,
     ) {
-        let uniforms = uniform! {
-            sun_position: [0.0, self.sun_position, 0.0],
-            matrix: matrix.to_cols_array_2d(),
-            tex: atlas,
-            lightmap: lightmap,
-            with_tex: true,
-        };
+        self.shader
+            .bind()
+            .with_uniform("sun_position", [0.0, self.sun_position, 0.0])
+            .with_uniform("matrix", matrix)
+            .with_uniform("tex", atlas)
+            .with_uniform("lightmap", lightmap)
+            .with_uniform("with_tex", true)
+            .with_uniform("fog_color", <[f32; 4]>::from_value(&get_sky_color((false, 0.5), 0.0)))
+            .with_uniform("fog_env_start", 32.0)
+            .with_uniform("fog_env_end", 144.0)
+            .with_uniform("fog_render_dist_start", 112.0)
+            .with_uniform("fog_render_dist_end", 160.0);
 
-        frame
-            .draw(vertices, indices, &self.shader, &uniforms, &DrawParameters {
-                depth: Depth {
-                    test: DepthTest::IfLessOrEqual,
-                    write: true,
-                    ..Depth::default()
-                },
-                backface_culling: BackfaceCullingMode::CullCounterClockwise,
-                polygon_mode: if wireframe { PolygonMode::Line } else { PolygonMode::Fill },
-                blend: BLENDING,
-                ..DrawParameters::default()
-            })
-            .unwrap();
+        pass.apply_params(DrawParams {
+            blend: Some(Blend {
+                color: (BlendingFactor::SourceAlpha, BlendingFactor::OneMinusSourceAlpha),
+                alpha: (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),
+            }),
+            depth: Some(Depth {
+                test: DepthTest::IfLessOrEqual,
+                write: true,
+            }),
+            culling: Some(BackfaceCullingMode::CullCounterClockwise),
+        });
+
+        pass.draw_elements(vertices, indices);
+        pass.reset_params();
     }
 
-    pub fn render_with_params<F: Surface, T: Frustum>(
+    pub fn render_with_params<T: Frustum>(
         &mut self,
-        frame: &mut F,
+        backend: &RenderBackend,
+        pass: &mut RenderPass,
         camera_pos: Point3D,
         frustum: &T,
         matrix: Transform3D,
-        atlas: Sampler<'_, Texture2d>,
-        lightmap: Sampler<'_, Texture2d>,
-        params: &DrawParameters,
+        atlas: SampledTexture2d,
+        lightmap: SampledTexture2d,
+        params: DrawParams,
     ) {
         for (&origin, subchunks) in &mut self.world_mesh {
             if Self::is_chunk_visible(frustum, origin) {
@@ -419,8 +435,8 @@ impl ChunkRenderer {
 
                                 entry.solid_indices = solid_indices;
                                 entry.translucent_indices = translucent_indices;
-                                entry.solid_buffer.vertices = VertexBuffer::new(&self.display, &solid_vertices).unwrap();
-                                entry.translucent_buffer.vertices = VertexBuffer::new(&self.display, &translucent_vertices).unwrap();
+                                entry.solid_buffer.vertices = backend.create_vertex_buffer(&solid_vertices, &self.shader, false).unwrap();
+                                entry.translucent_buffer.vertices = backend.create_vertex_buffer(&translucent_vertices, &self.shader, false).unwrap();
                             }
 
                             for (state, subchunk) in subchunk_states.iter().zip(&entry.subchunk_slices) {
@@ -437,51 +453,8 @@ impl ChunkRenderer {
                             }
 
                             entry.subchunk_states = subchunk_states;
-                            entry.solid_buffer.indices = IndexBuffer::new(&self.display, PrimitiveType::TrianglesList, &new_solid_indices).unwrap();
-                            entry.translucent_buffer.indices = IndexBuffer::new(&self.display, PrimitiveType::TrianglesList, &new_translucent_indices).unwrap();
-
-                            // let mut solid_faces =
-                            // Vec::with_capacity(rendered_subchunks *
-                            // SUBCHUNK_SIZE * SUBCHUNK_SIZE * SUBCHUNK_SIZE *
-                            // 6);
-                            // let mut translucent_faces =
-                            // Vec::with_capacity(rendered_subchunks *
-                            // SUBCHUNK_SIZE * SUBCHUNK_SIZE * SUBCHUNK_SIZE *
-                            // 6);
-
-                            // // generate chunk rendering data if any of
-                            // subchunks are dirty or now visible
-                            // for (state, subchunk) in
-                            // subchunk_states.iter().zip(subchunks) {
-                            //     if state.is_rendered() {
-                            //         solid_faces.extend_from_slice(&
-                            // subchunk[0]);
-                            //         translucent_faces.extend_from_slice(&
-                            // subchunk[1]);     }
-                            // }
-
-                            // translucent_faces.sort_unstable_by(|a, b|
-                            // a.cmp(camera_pos, b).reverse());
-
-                            // let solid_voxels =
-                            // Self::get_voxels_mesh(&solid_faces);
-                            // let translucent_voxels =
-                            // Self::get_voxels_mesh(&translucent_faces);
-
-                            // *entry = RenderChunk {
-                            //     subchunk_states,
-                            //     solid_buffer:
-                            // CachedBuffers::new(&self.display,
-                            // &solid_voxels.0, PrimitiveType::TrianglesList,
-                            // &solid_voxels.1).unwrap(),
-                            //     translucent_buffer: CachedBuffers::new(
-                            //         &self.display,
-                            //         &translucent_voxels.0,
-                            //         PrimitiveType::TrianglesList,
-                            //         &translucent_voxels.1,
-                            //     )
-                            //     .unwrap(),
-                            // };
+                            entry.solid_buffer.indices = backend.create_index_buffer(ElementType::Triangles, &new_solid_indices).unwrap();
+                            entry.translucent_buffer.indices = backend.create_index_buffer(ElementType::Triangles, &new_translucent_indices).unwrap();
                         }
                     }
                     indexmap::map::Entry::Vacant(entry) => {
@@ -530,12 +503,13 @@ impl ChunkRenderer {
                         entry.insert(RenderChunk {
                             subchunk_states,
                             subchunk_slices,
-                            solid_buffer: CachedBuffers::new(&self.display, &solid_vertices, PrimitiveType::TrianglesList, &new_solid_indices).unwrap(),
+                            solid_buffer: RenderBuffer::new(backend, &solid_vertices, &self.shader, ElementType::Triangles, &new_solid_indices).unwrap(),
                             solid_indices,
-                            translucent_buffer: CachedBuffers::new(
-                                &self.display,
+                            translucent_buffer: RenderBuffer::new(
+                                backend,
                                 &translucent_vertices,
-                                PrimitiveType::TrianglesList,
+                                &self.shader,
+                                ElementType::Triangles,
                                 &new_translucent_indices,
                             )
                             .unwrap(),
@@ -548,50 +522,49 @@ impl ChunkRenderer {
             }
         }
 
-        let uniforms = uniform! {
-            sun_position: [0.0, self.sun_position, 0.0],
-            matrix: matrix.to_cols_array_2d(),
-            tex: atlas,
-            lightmap: lightmap,
-            with_tex: true,
-        };
+        self.shader
+            .bind()
+            .with_uniform("sun_position", [0.0, self.sun_position, 0.0])
+            .with_uniform("matrix", matrix)
+            .with_uniform("tex", atlas)
+            .with_uniform("lightmap", lightmap)
+            .with_uniform("with_tex", true)
+            .with_uniform("fog_color", <[f32; 4]>::from_value(&get_sky_color((false, 0.5), 0.0)))
+            .with_uniform("fog_env_start", 32.0)
+            .with_uniform("fog_env_end", 144.0)
+            .with_uniform("fog_render_dist_start", 112.0)
+            .with_uniform("fog_render_dist_end", 160.0);
+
+        pass.apply_params(params);
 
         self.draw_calls = 0;
 
-        let camera_pos = ChunkManager::<()>::to_local(camera_pos.as_());
+        let camera_pos = ChunkManager::<()>::to_local(camera_pos.as_ivec3());
 
         self.rendered_chunks.sort_unstable_by(|&a, _, &b, _| {
-            let a = (camera_pos - a).as_::<f32>().length_squared();
-            let b = (camera_pos - b).as_::<f32>().length_squared();
+            let a = (camera_pos - a).as_vec2().length_squared();
+            let b = (camera_pos - b).as_vec2().length_squared();
 
             a.total_cmp(&b)
         });
 
         for chunk in self.rendered_chunks.values() {
-            if chunk.solid_buffer.vertices.len() > 0 {
-                frame
-                    .draw(&chunk.solid_buffer.vertices, &chunk.solid_buffer.indices, &self.shader, &uniforms, params)
-                    .expect("failed to draw!");
+            if !chunk.solid_buffer.vertices.is_empty() {
+                pass.draw_elements(&chunk.solid_buffer.vertices, &chunk.solid_buffer.indices);
 
                 self.draw_calls += 1;
             }
         }
 
         for chunk in self.rendered_chunks.values().rev() {
-            if chunk.translucent_buffer.vertices.len() > 0 {
-                frame
-                    .draw(
-                        &chunk.translucent_buffer.vertices,
-                        &chunk.translucent_buffer.indices,
-                        &self.shader,
-                        &uniforms,
-                        params,
-                    )
-                    .expect("failed to draw!");
+            if !chunk.translucent_buffer.vertices.is_empty() {
+                pass.draw_elements(&chunk.translucent_buffer.vertices, &chunk.translucent_buffer.indices);
 
                 self.draw_calls += 1;
             }
         }
+
+        pass.reset_params();
 
         self.vertices = self
             .rendered_chunks
@@ -600,26 +573,26 @@ impl ChunkRenderer {
             .sum();
     }
 
-    pub fn render<T: Surface>(
+    pub fn render(
         &mut self,
-        frame: &mut T,
+        backend: &RenderBackend,
+        pass: &mut RenderPass,
         camera_pos: Point3D,
         frustum: &FrustumCulling,
         matrix: Transform3D,
-        atlas: Sampler<'_, Texture2d>,
-        lightmap: Sampler<'_, Texture2d>,
-        wireframe: bool,
+        atlas: SampledTexture2d,
+        lightmap: SampledTexture2d,
     ) {
-        self.render_with_params(frame, camera_pos, frustum, matrix, atlas, lightmap, &DrawParameters {
-            depth: Depth {
+        self.render_with_params(backend, pass, camera_pos, frustum, matrix, atlas, lightmap, DrawParams {
+            blend: Some(Blend {
+                color: (BlendingFactor::SourceAlpha, BlendingFactor::OneMinusSourceAlpha),
+                alpha: (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),
+            }),
+            depth: Some(Depth {
                 test: DepthTest::IfLessOrEqual,
                 write: true,
-                ..Depth::default()
-            },
-            backface_culling: BackfaceCullingMode::CullCounterClockwise,
-            polygon_mode: if wireframe { PolygonMode::Line } else { PolygonMode::Fill },
-            blend: BLENDING,
-            ..DrawParameters::default()
+            }),
+            culling: Some(BackfaceCullingMode::CullCounterClockwise),
         });
     }
 }

@@ -1,15 +1,8 @@
-use std::borrow::{Borrow, Cow};
-#[cfg(feature = "image-rendering")] use std::path::PathBuf;
+use std::path::PathBuf;
 
-#[cfg(feature = "text-rendering")]
 use ahash::{HashMap, HashMapExt};
-#[cfg(feature = "text-rendering")]
-use fontdue::{
-    Font, FontSettings,
-    layout::{CoordinateSystem, GlyphRasterConfig, Layout, TextStyle},
-};
-#[cfg(feature = "image-rendering")] use image::ImageBuffer;
-#[cfg(feature = "shape-rendering")]
+use horns::{Blend, BlendingFactor, DrawParams, ElementType, Error, Program, RenderBackend, RenderPass, Shader, Texture2d, VertexBuffer, impl_vertex};
+use image::ImageBuffer;
 use lyon_tessellation::{
     FillBuilder, FillGeometryBuilder, FillOptions, FillTessellator, FillVertex, GeometryBuilder, GeometryBuilderError, StrokeGeometryBuilder, StrokeVertex,
     TessellationError, VertexId,
@@ -19,34 +12,34 @@ use lyon_tessellation::{
         builder::{BorderRadii, NoAttributes, Transformed},
     },
 };
-#[cfg(feature = "image-rendering")] use meck::TextureAtlas;
-use meralus_engine::WindowDisplay;
-#[cfg(feature = "image-rendering")]
-use meralus_shared::ConvertTo;
-use meralus_shared::{Color, Point2D, Point3D, Transform3D, UPoint2D, Vector4D};
-#[cfg(feature = "text-rendering")]
-use meralus_shared::{ConvertFrom, IntConversionError};
-#[cfg(feature = "shape-rendering")]
-use meralus_shared::{RRect2D, Rect2D, Size2D, Thickness, Vector2D};
-use swash::CacheKey;
+use meck::TextureAtlas;
+use meralus_shared::{
+    AsValue, Color, ConvertTo, IntConversionError, Point2D, Point3D, RRect, Rect, Size2D, Thickness, Transform3D, USize2D, Vector2D, Vector4D,
+};
+use swash::{CacheKey, FontRef, shape::ShapeContext};
 
-use super::Shader;
-use crate::{BLENDING, RenderInfo, VertexBuffers, impl_vertex};
+use crate::render::{RawRenderBuffer, context::RenderInfo};
 
 pub struct ShapeShader;
 
 impl Shader for ShapeShader {
-    const FRAGMENT: &str = "./resources/shaders/shape.fs";
-    const VERTEX: &str = "./resources/shaders/shape.vs";
+    fn fragment(&self) -> String {
+        std::fs::read_to_string("./resources/shaders/shape.fs").unwrap()
+    }
+
+    fn vertex(&self) -> String {
+        std::fs::read_to_string("./resources/shaders/shape.vs").unwrap()
+    }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CommonVertex {
-    pub position: Point3D,
-    pub color: Color,
-    pub uv: Point2D,
     pub clip: Vector4D,
+    pub position: Point3D,
+    pub uv: Point2D,
+    pub color: [u8; 4],
+    pub _pad: [u8; 8],
 }
 
 impl_vertex! {
@@ -54,13 +47,13 @@ impl_vertex! {
         position: [f32; 3],
         color: [u8; 4],
         uv: [f32; 2],
-        clip: [f32; 4]
+        clip: [f32; 4],
+        _pad: [u8; 8]
     }
 }
 
-#[cfg(feature = "shape-rendering")]
 pub struct ShapeGeometryBuilder {
-    buffers: VertexBuffers<CommonVertex, u32>,
+    buffers: RawRenderBuffer<CommonVertex, u32>,
     first_vertex: u32,
     first_index: u32,
     vertex_offset: u32,
@@ -69,9 +62,8 @@ pub struct ShapeGeometryBuilder {
     uv_rect: Option<(Point2D, Vector2D, Point2D, Size2D)>,
 }
 
-#[cfg(feature = "shape-rendering")]
 impl ShapeGeometryBuilder {
-    pub const fn new(buffers: VertexBuffers<CommonVertex, u32>, white_pixel_uv: Point2D, color: Color) -> Self {
+    pub const fn new(buffers: RawRenderBuffer<CommonVertex, u32>, white_pixel_uv: Point2D, color: Color) -> Self {
         let first_vertex = buffers.vertices.len() as u32;
         let first_index = buffers.indices.len() as u32;
 
@@ -102,16 +94,15 @@ impl ShapeGeometryBuilder {
         self.vertex_offset = offset;
     }
 
-    fn build(&mut self) -> VertexBuffers<CommonVertex, u32> {
-        let (num_vertices, num_indices) = (self.buffers.vertices.capacity(), self.buffers.indices.capacity());
+    fn build(&mut self) -> RawRenderBuffer<CommonVertex, u32> {
+        let (num_vertices, num_indices) = (self.buffers.vertices.len(), self.buffers.indices.len());
 
         self.vertex_offset = 0;
 
-        std::mem::replace(&mut self.buffers, VertexBuffers::with_capacity(num_vertices, num_indices))
+        std::mem::replace(&mut self.buffers, RawRenderBuffer::with_capacity(num_vertices, num_indices))
     }
 }
 
-#[cfg(feature = "shape-rendering")]
 impl GeometryBuilder for ShapeGeometryBuilder {
     fn begin_geometry(&mut self) {
         self.first_vertex = self.buffers.vertices.len() as u32;
@@ -137,23 +128,23 @@ impl GeometryBuilder for ShapeGeometryBuilder {
     }
 }
 
-#[cfg(feature = "shape-rendering")]
 impl FillGeometryBuilder for ShapeGeometryBuilder {
     fn add_fill_vertex(&mut self, vertex: FillVertex) -> Result<VertexId, GeometryBuilderError> {
         let position = Point2D::from_array(vertex.position().to_array());
 
         self.buffers.vertices.push(CommonVertex {
             position: position.extend(0.0),
-            color: self.color,
+            color: self.color.as_value(),
             uv: if let Some((offset, uv_size, origin, size)) = self.uv_rect {
                 Point2D::new(
-                    uv_size.x.mul_add((position.x - origin.x) / size.width, offset.x),
-                    uv_size.y.mul_add((position.y - origin.y) / size.height, offset.y),
+                    uv_size.x.mul_add((position.x - origin.x) / size.x, offset.x),
+                    uv_size.y.mul_add((position.y - origin.y) / size.y, offset.y),
                 )
             } else {
                 self.white_pixel_uv
             },
             clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+            _pad: [0; 8],
         });
 
         let len = self.buffers.vertices.len();
@@ -166,14 +157,14 @@ impl FillGeometryBuilder for ShapeGeometryBuilder {
     }
 }
 
-#[cfg(feature = "shape-rendering")]
 impl StrokeGeometryBuilder for ShapeGeometryBuilder {
     fn add_stroke_vertex(&mut self, vertex: StrokeVertex) -> Result<VertexId, GeometryBuilderError> {
         self.buffers.vertices.push(CommonVertex {
             position: Point3D::from_array(vertex.position().extend(0.0).to_array()),
-            color: self.color,
+            color: self.color.as_value(),
             uv: self.white_pixel_uv,
             clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+            _pad: [0; 8],
         });
 
         let len = self.buffers.vertices.len();
@@ -186,17 +177,15 @@ impl StrokeGeometryBuilder for ShapeGeometryBuilder {
     }
 }
 
-#[cfg(feature = "shape-rendering")]
 pub struct CommonTessellator {
     pub builder: ShapeGeometryBuilder,
     tessellator: FillTessellator,
     options: FillOptions,
 }
 
-#[cfg(feature = "shape-rendering")]
 impl CommonTessellator {
     pub fn new(white_pixel_uv: Point2D) -> Self {
-        let builder = ShapeGeometryBuilder::new(VertexBuffers::new(), white_pixel_uv, Color::RED);
+        let builder = ShapeGeometryBuilder::new(RawRenderBuffer::new(), white_pixel_uv, Color::RED);
         let tessellator = FillTessellator::new();
         let options = FillOptions::default();
 
@@ -240,17 +229,17 @@ impl CommonTessellator {
         builder.build()
     }
 
-    pub fn build(&mut self) -> VertexBuffers<CommonVertex, u32> {
+    pub fn build(&mut self) -> RawRenderBuffer<CommonVertex, u32> {
         self.builder.build()
     }
 }
 
 #[derive(Debug)]
-#[cfg(feature = "shape-rendering")]
+
 enum Op {
     Circle { origin: Point2D, radius: f32 },
-    Rect(Rect2D),
-    RoundRect(RRect2D),
+    Rect(Rect),
+    RoundRect(RRect),
     Begin(Point2D),
     LineTo(Point2D),
     CubicBezierTo(Point2D, Point2D, Point2D),
@@ -258,12 +247,11 @@ enum Op {
 }
 
 #[derive(Debug, Default)]
-#[cfg(feature = "shape-rendering")]
+
 pub struct Path {
     ops: Vec<Op>,
 }
 
-#[cfg(feature = "shape-rendering")]
 impl Path {
     pub fn add_circle(&mut self, origin: Point2D, radius: f32) -> &mut Self {
         self.ops.push(Op::Circle { origin, radius });
@@ -272,13 +260,13 @@ impl Path {
     }
 
     pub fn add_rect(&mut self, origin: Point2D, size: Size2D) -> &mut Self {
-        self.ops.push(Op::Rect(Rect2D::new(origin, size)));
+        self.ops.push(Op::Rect(Rect::new(origin, size)));
 
         self
     }
 
     pub fn add_round_rect(&mut self, origin: Point2D, size: Size2D, corner_radius: Thickness) -> &mut Self {
-        self.ops.push(Op::RoundRect(RRect2D::new(origin, size, corner_radius)));
+        self.ops.push(Op::RoundRect(RRect::new(origin, size, corner_radius)));
 
         self
     }
@@ -316,10 +304,9 @@ pub enum ObjectFit {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg(feature = "image-rendering")]
+
 pub enum AtlasKey {
-    #[cfg(feature = "text-rendering")]
-    Text(Option<GlyphRasterConfig>),
+    // Text(Option<GlyphRasterConfig>),
     Image(PathBuf),
     WhitePixel,
 }
@@ -327,24 +314,21 @@ pub enum AtlasKey {
 #[allow(dead_code)]
 pub struct CommonRenderer {
     pub(crate) shader: Program,
-    #[cfg(feature = "image-rendering")]
+
     atlas: TextureAtlas<AtlasKey>,
     pub texture: Texture2d,
 
     // SHAPE RENDERING
-    #[cfg(feature = "shape-rendering")]
     pub tessellator: CommonTessellator,
 
     // TEXT RENDERING
-    #[cfg(feature = "text-rendering")]
-    layout: Layout,
-    #[cfg(feature = "text-rendering")]
+    // layout: Layout,
     font_name_map: HashMap<String, usize>,
-    #[cfg(feature = "text-rendering")]
+
     fonts: Vec<OwnedFont>,
 
     // COMMON RENDERING
-    pub(crate) buffers: VertexBuffers<CommonVertex, u32>,
+    pub(crate) buffers: RawRenderBuffer<CommonVertex, u32>,
 
     // VERTICES TRANSFORMATION
     transform: Option<Transform3D>,
@@ -357,18 +341,17 @@ pub struct CommonRenderer {
 
 pub struct OwnedFont {
     pub data: Vec<u8>,
-    pub font: Font,
+    // pub font: Font,
     pub offset: u32,
     pub key: CacheKey,
 }
 
-impl Borrow<Font> for OwnedFont {
-    fn borrow(&self) -> &Font {
-        &self.font
-    }
-}
+// impl Borrow<Font> for OwnedFont {
+//     fn borrow(&self) -> &Font {
+//         &self.font
+//     }
+// }
 
-#[cfg(feature = "image-rendering")]
 const TEXT_BASE_VERTICES: [(Point3D, Point2D); 4] = [
     (Point3D::new(0.0, 1.0, 0.0), Point2D::new(0.0, 1.0)),
     (Point3D::new(0.0, 0.0, 0.0), Point2D::new(0.0, 0.0)),
@@ -377,50 +360,47 @@ const TEXT_BASE_VERTICES: [(Point3D, Point2D); 4] = [
 ];
 
 impl CommonRenderer {
-    pub fn new(display: &WindowDisplay) -> Result<Self, TextureCreationError> {
-        #[cfg(feature = "image-rendering")]
+    pub fn new(backend: &RenderBackend) -> Result<Self, Error> {
         let mut atlas = TextureAtlas::new(4096).with_spacing(4);
-        #[cfg(feature = "image-rendering")]
+
         let image = ImageBuffer::from_pixel(24, 24, image::Rgba([255, 255, 255, 255]));
 
-        #[cfg(feature = "image-rendering")]
         let (offset, size, _) = atlas.append(AtlasKey::WhitePixel, &image);
-        #[cfg(not(feature = "image-rendering"))]
-        let offset = Point2D::ZERO;
-        #[cfg(not(feature = "image-rendering"))]
-        let size = Point2D::splat(24.0) / 4096.0;
+        // #[cfg(not(feature = "image-rendering"))]
+        // let offset = Point2D::ZERO;
+        // #[cfg(not(feature = "image-rendering"))]
+        // let size = Point2D::splat(24.0) / 4096.0;
 
-        let texture = Texture2d::empty(display, 4096, 4096)?;
+        let texture = backend.create_empty_texture2d(4096, 4096)?;
 
-        texture.write(
-            Rect {
-                left: (offset.x * 4096.0) as u32,
-                bottom: (offset.y * 4096.0) as u32,
-                width: (size.x * 4096.0) as u32,
-                height: (size.y * 4096.0) as u32,
-            },
-            RawImage2d {
-                data: Cow::Owned(vec![255u8; 24 * 24 * 4]),
-                width: 24,
-                height: 24,
-                format: ClientFormat::U8U8U8U8,
-            },
+        texture.writable().write(
+            (offset.x * 4096.0) as u32,
+            (offset.y * 4096.0) as u32,
+            (size.x * 4096.0) as u32,
+            (size.y * 4096.0) as u32,
+            &[255u8; 24 * 24 * 4]
+            // RawImage2d {
+            //     data: Cow::Owned(vec![255u8; 24 * 24 * 4]),
+            //     width: 24,
+            //     height: 24,
+            //     format: ClientFormat::U8U8U8U8,
+            // },
         );
 
+        let shader = backend.create_program(&ShapeShader)?;
+
         Ok(Self {
-            #[cfg(feature = "shape-rendering")]
             tessellator: CommonTessellator::new(offset + (size / 2.0)),
-            #[cfg(feature = "image-rendering")]
+
             atlas,
             texture,
-            #[cfg(feature = "text-rendering")]
-            layout: Layout::new(CoordinateSystem::PositiveYDown),
-            #[cfg(feature = "text-rendering")]
+
+            // layout: Layout::new(CoordinateSystem::PositiveYDown),
             font_name_map: HashMap::new(),
-            #[cfg(feature = "text-rendering")]
+
             fonts: Vec::new(),
-            shader: ShapeShader::program(display),
-            buffers: VertexBuffers::new(),
+            shader,
+            buffers: RawRenderBuffer::new(),
             transform: None,
             window_matrix: Transform3D::IDENTITY,
             matrix: None,
@@ -428,7 +408,6 @@ impl CommonRenderer {
         })
     }
 
-    #[cfg(feature = "text-rendering")]
     pub fn fonts(&self) -> &[OwnedFont] {
         &self.fonts
     }
@@ -437,7 +416,6 @@ impl CommonRenderer {
         self.window_matrix
     }
 
-    #[cfg(feature = "text-rendering")]
     pub const fn white_pixel_uv(&self) -> Point2D {
         self.tessellator.builder.white_pixel_uv
     }
@@ -461,42 +439,60 @@ impl CommonRenderer {
     /// # Errors
     ///
     /// Returns [`TextureCreationError`] if texture creation on GPU failed.
-    #[cfg(feature = "text-rendering")]
+
     pub fn add_font<T: Into<String>>(&mut self, name: T, data: &[u8]) {
-        if let Ok(font) = Font::from_bytes(data, FontSettings::default()) {
-            use swash::FontRef;
+        // if let Ok(font) = Font::from_bytes(data, FontSettings::default()) {
+        use swash::FontRef;
 
-            let font_info = FontRef::from_index(data, 0).unwrap();
+        let font_info = FontRef::from_index(data, 0).unwrap();
 
-            self.font_name_map.insert(name.into(), self.fonts.len());
+        self.font_name_map.insert(name.into(), self.fonts.len());
 
-            self.fonts.push(OwnedFont {
-                data: font_info.data.to_vec(),
-                font,
-                offset: font_info.offset,
-                key: font_info.key,
-            });
-        }
+        self.fonts.push(OwnedFont {
+            data: font_info.data.to_vec(),
+            // font,
+            offset: font_info.offset,
+            key: font_info.key,
+        });
+        // }
     }
 
-    #[cfg(feature = "text-rendering")]
     pub fn measure<F: AsRef<str>, T: AsRef<str>>(&self, font: F, text: T, size: f32, max_width: Option<f32>) -> Option<Size2D> {
-        self.font_name_map.get(font.as_ref()).copied().and_then(|font_index| {
+        self.font_name_map.get(font.as_ref()).copied().map(|font_index| {
             let text = text.as_ref();
 
-            self.layout
-                .measure(&self.fonts, &TextStyle::new(text, size, font_index), max_width)
-                .into_iter()
-                .try_fold(Size2D::ZERO, |mut metrics, glyph| {
-                    metrics.width = metrics.width.max(glyph.x + f32::convert_from(glyph.width).ok()?);
-                    metrics.height = metrics.height.max(glyph.y + f32::convert_from(glyph.height).ok()?);
+            let font_ref = FontRef::from_index(&self.fonts[font_index].data, 0).unwrap();
 
-                    Some(metrics)
-                })
+            let mut shape_context = ShapeContext::new();
+            let mut shaper = shape_context.builder(font_ref).size(size).build();
+            let metrics = font_ref.glyph_metrics(&[]).scale(size);
+
+            shaper.add_str(text);
+
+            let mut metrics = Size2D::ZERO;
+            let mut x = 0.0;
+            let mut y = size;
+
+            shaper.shape_with(|cluster| {
+                use swash::text::cluster::Whitespace;
+
+                if matches!(cluster.info.whitespace(), Whitespace::Newline) {
+                    metrics.x = metrics.x.max(x);
+
+                    x = 0.0;
+                    y += size;
+                }
+
+                for glyph in cluster.glyphs {
+                    x += cluster.advance();
+                }
+            });
+
+            metrics.x = metrics.x.max(x);
+            metrics.with_y(y)
         })
     }
 
-    #[cfg(all(feature = "shape-rendering", feature = "image-rendering"))]
     pub fn draw_round_image<P: AsRef<std::path::Path>>(
         &mut self,
         origin: Point2D,
@@ -516,19 +512,17 @@ impl CommonRenderer {
 
             let (offset, size, _) = self.atlas.append(key, &image);
 
-            self.texture.write(
-                Rect {
-                    left: (offset.x * 4096.0).convert().unwrap(),
-                    bottom: (offset.y * 4096.0).convert().unwrap(),
-                    width: (size.x * 4096.0).convert().unwrap(),
-                    height: (size.y * 4096.0).convert().unwrap(),
-                },
-                RawImage2d {
-                    data: Cow::Owned(image.into_raw()),
-                    width,
-                    height,
-                    format: ClientFormat::U8U8U8U8,
-                },
+            self.texture.writable().write(
+                (offset.x * 4096.0).convert().unwrap(),
+                (offset.y * 4096.0).convert().unwrap(),
+                (size.x * 4096.0).convert().unwrap(),
+                (size.y * 4096.0).convert().unwrap(),
+                image.as_raw(), /* RawImage2d {
+                                 *     data: Cow::Owned(image.into_raw()),
+                                 *     width,
+                                 *     height,
+                                 *     format: ClientFormat::U8U8U8U8,
+                                 * }, */
             );
 
             (offset, size)
@@ -539,7 +533,7 @@ impl CommonRenderer {
         self.tessellator
             .tessellate_with_color(Color::WHITE, |builder| {
                 builder.add_rounded_rectangle(
-                    &bytemuck::cast(Rect2D::new(origin, size).to_box2()),
+                    &bytemuck::cast(Rect::new(origin, size).to_box2d()),
                     &BorderRadii {
                         top_left: corner_radius.top_left(),
                         top_right: corner_radius.top_right(),
@@ -569,11 +563,10 @@ impl CommonRenderer {
         Ok(())
     }
 
-    #[cfg(feature = "image-rendering")]
     pub fn draw_image<P: AsRef<std::path::Path>>(&mut self, origin: Point2D, size: Size2D, path: P, object_fit: ObjectFit) -> Result<(), image::ImageError> {
         let path = path.as_ref();
         let key = AtlasKey::Image(path.to_path_buf());
-        let resulting_scale = size.to_vector() / 4096.0;
+        let resulting_scale = size / 4096.0;
 
         let (offset, uv_size) = if let Some((offset, scale, _)) = self.atlas.get_texture_uv(&key) {
             match object_fit {
@@ -602,19 +595,17 @@ impl CommonRenderer {
 
             let (offset, size, _) = self.atlas.append(key, &image);
 
-            self.texture.write(
-                Rect {
-                    left: (offset.x * 4096.0).convert().unwrap(),
-                    bottom: (offset.y * 4096.0).convert().unwrap(),
-                    width: (size.x * 4096.0).convert().unwrap(),
-                    height: (size.y * 4096.0).convert().unwrap(),
-                },
-                RawImage2d {
-                    data: Cow::Owned(image.into_raw()),
-                    width,
-                    height,
-                    format: ClientFormat::U8U8U8U8,
-                },
+            self.texture.writable().write(
+                (offset.x * 4096.0).convert().unwrap(),
+                (offset.y * 4096.0).convert().unwrap(),
+                (size.x * 4096.0).convert().unwrap(),
+                (size.y * 4096.0).convert().unwrap(),
+                image.as_raw(), /* RawImage2d {
+                                 *     data: Cow::Owned(image.into_raw()),
+                                 *     width,
+                                 *     height,
+                                 *     format: ClientFormat::U8U8U8U8,
+                                 * }, */
             );
 
             match object_fit {
@@ -639,7 +630,7 @@ impl CommonRenderer {
         };
 
         self.buffers.vertices.extend(TEXT_BASE_VERTICES.map(|(position, uv)| {
-            let mut position = (origin + Point2D::new(position.x * size.width, position.y * size.height)).extend(position.z);
+            let mut position = (origin + Point2D::new(position.x * size.x, position.y * size.y)).extend(position.z);
 
             if let Some(transform) = &self.transform {
                 position = transform.transform_point3(position);
@@ -647,9 +638,10 @@ impl CommonRenderer {
 
             CommonVertex {
                 position,
-                color: Color::WHITE,
+                color: Color::WHITE.as_value(),
                 uv: offset + Point2D::new(uv.x * uv_size.x, uv.y * uv_size.y),
                 clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+                _pad: [0; 8],
             }
         }));
 
@@ -660,25 +652,22 @@ impl CommonRenderer {
         Ok(())
     }
 
-    #[cfg(feature = "shape-rendering")]
     pub fn draw_circle(&mut self, origin: Point2D, radius: f32, color: Color) -> Result<(), TessellationError> {
         self.draw_shape(|builder| builder.add_circle(bytemuck::cast(origin), radius, Winding::Positive), color)
     }
 
-    #[cfg(feature = "shape-rendering")]
     pub fn draw_rect(&mut self, origin: Point2D, size: Size2D, color: Color) -> Result<(), TessellationError> {
         self.draw_shape(
-            |builder| builder.add_rectangle(&bytemuck::cast(Rect2D::new(origin, size).to_box2()), Winding::Positive),
+            |builder| builder.add_rectangle(&bytemuck::cast(Rect::new(origin, size).to_box2d()), Winding::Positive),
             color,
         )
     }
 
-    #[cfg(feature = "shape-rendering")]
     pub fn draw_round_rect(&mut self, origin: Point2D, size: Size2D, corner_radius: Thickness, color: Color) -> Result<(), TessellationError> {
         self.draw_shape(
             |builder| {
                 builder.add_rounded_rectangle(
-                    &bytemuck::cast(Rect2D::new(origin, size).to_box2()),
+                    &bytemuck::cast(Rect::new(origin, size).to_box2d()),
                     &BorderRadii {
                         top_left: corner_radius.top_left(),
                         top_right: corner_radius.top_right(),
@@ -692,7 +681,6 @@ impl CommonRenderer {
         )
     }
 
-    #[cfg(all(feature = "shape-rendering", feature = "image-rendering"))]
     pub fn draw_image_path<P: AsRef<std::path::Path>>(&mut self, path: Path, image_path: P) -> Result<(), image::ImageError> {
         let image_path = image_path.as_ref();
         let key = AtlasKey::Image(image_path.to_path_buf());
@@ -706,19 +694,18 @@ impl CommonRenderer {
 
             let (offset, size, _) = self.atlas.append(key, &image);
 
-            self.texture.write(
-                Rect {
-                    left: (offset.x * 4096.0).convert().unwrap(),
-                    bottom: (offset.y * 4096.0).convert().unwrap(),
-                    width: (size.x * 4096.0).convert().unwrap(),
-                    height: (size.y * 4096.0).convert().unwrap(),
-                },
-                RawImage2d {
-                    data: Cow::Owned(image.into_raw()),
-                    width,
-                    height,
-                    format: ClientFormat::U8U8U8U8,
-                },
+            self.texture.writable().write(
+                (offset.x * 4096.0).convert().unwrap(),
+                (offset.y * 4096.0).convert().unwrap(),
+                (size.x * 4096.0).convert().unwrap(),
+                (size.y * 4096.0).convert().unwrap(),
+                image.as_raw(),
+                // RawImage2d {
+                //     data: Cow::Owned(image.into_raw()),
+                //     width,
+                //     height,
+                //     format: ClientFormat::U8U8U8U8,
+                // },
             );
 
             (offset, size)
@@ -734,11 +721,11 @@ impl CommonRenderer {
                 }
                 Op::Rect(rect) => {
                     min = min.min(rect.origin);
-                    max = max.max(rect.origin + rect.size.to_vector());
+                    max = max.max(rect.origin + rect.size);
                 }
                 Op::RoundRect(rrect) => {
                     min = min.min(rrect.origin);
-                    max = max.max(rrect.origin + rrect.size.to_vector());
+                    max = max.max(rrect.origin + rrect.size);
                 }
                 &Op::Begin(at) => {
                     min = min.min(at);
@@ -757,7 +744,7 @@ impl CommonRenderer {
         }
 
         let origin = min;
-        let size = (max - min).to_size();
+        let size = (max - min);
 
         self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
         self.tessellator.set_uv_rect((offset, uv_size, origin, size));
@@ -766,7 +753,7 @@ impl CommonRenderer {
                 for op in path.ops {
                     match op {
                         Op::Circle { origin, radius } => builder.add_circle(bytemuck::cast(origin), radius, Winding::Positive),
-                        Op::Rect(rect) => builder.add_rectangle(&bytemuck::cast(rect.to_box2()), Winding::Positive),
+                        Op::Rect(rect) => builder.add_rectangle(&bytemuck::cast(rect.to_box2d()), Winding::Positive),
                         Op::RoundRect(rrect) => builder.add_rounded_rectangle(
                             &bytemuck::cast(rrect.as_box()),
                             &BorderRadii {
@@ -809,14 +796,13 @@ impl CommonRenderer {
         Ok(())
     }
 
-    #[cfg(feature = "shape-rendering")]
     pub fn draw_path(&mut self, path: Path, color: Color) -> Result<(), TessellationError> {
         self.draw_shape(
             |builder| {
                 for op in path.ops {
                     match op {
                         Op::Circle { origin, radius } => builder.add_circle(bytemuck::cast(origin), radius, Winding::Positive),
-                        Op::Rect(rect) => builder.add_rectangle(&bytemuck::cast(rect.to_box2()), Winding::Positive),
+                        Op::Rect(rect) => builder.add_rectangle(&bytemuck::cast(rect.to_box2d()), Winding::Positive),
                         Op::RoundRect(rrect) => builder.add_rounded_rectangle(
                             &bytemuck::cast(rrect.as_box()),
                             &BorderRadii {
@@ -844,7 +830,6 @@ impl CommonRenderer {
         )
     }
 
-    #[cfg(feature = "shape-rendering")]
     pub fn draw_shape<F: FnOnce(&mut NoAttributes<FillBuilder>)>(&mut self, tessellate: F, color: Color) -> Result<(), TessellationError> {
         self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
         self.tessellator.tessellate_with_color(color, tessellate)?;
@@ -869,7 +854,6 @@ impl CommonRenderer {
         Ok(())
     }
 
-    #[cfg(feature = "text-rendering")]
     pub fn draw_text<F: AsRef<str>, T: AsRef<str>>(
         &mut self,
         origin: Point2D,
@@ -888,9 +872,10 @@ impl CommonRenderer {
 
             let text = text.as_ref();
 
-            self.layout.clear();
-            self.layout.set_max_width(max_width);
-            self.layout.append(&self.fonts, &TextStyle::new(text, font_size, font_index));
+            // self.layout.clear();
+            // self.layout.set_max_width(max_width);
+            // self.layout.append(&self.fonts, &TextStyle::new(text, font_size,
+            // font_index));
 
             let OwnedFont { data, offset, key, .. } = &self.fonts[font_index];
             let font_ref = FontRef {
@@ -974,84 +959,105 @@ impl CommonRenderer {
         Ok(())
     }
 
+    // #[must_use = "RenderInfo itself needs to be extended into other"]
+    // pub fn render_lines<S: Surface>(
+    //     &mut self,
+    //     surface: &mut S,
+    //     display: &WindowDisplay,
+    //     vertices: &[CommonVertex],
+    //     matrix: Option<Transform3D>,
+    // ) -> Result<RenderInfo, DrawError> {
+    //     let matrix = matrix.or(self.matrix).unwrap_or(self.window_matrix);
+    //     let vertex_buffer = VertexBuffer::new(display, vertices).unwrap();
+    //     let uniforms = uniform! {
+    //         atlas: self.texture
+    //             .sampled()
+    //             .minify_filter(MinifySamplerFilter::Nearest)
+    //             .magnify_filter(MagnifySamplerFilter::Nearest),
+    //         resolution:
+    // UPoint2D::from_tuple(surface.get_dimensions()).as_::<f32>().to_array(),
+    //         matrix: matrix.to_cols_array_2d(),
+    //     };
+
+    //     let vertices = vertex_buffer.len();
+
+    //     surface.draw(&vertex_buffer, NoIndices(PrimitiveType::LinesList),
+    // &self.shader, &uniforms, &DrawParameters {         blend: BLENDING,
+    //         ..DrawParameters::default()
+    //     })?;
+
+    //     Ok(RenderInfo { draw_calls: 1, vertices })
+    // }
+
     #[must_use = "RenderInfo itself needs to be extended into other"]
-    pub fn render_lines<S: Surface>(
-        &mut self,
-        surface: &mut S,
-        display: &WindowDisplay,
-        vertices: &[CommonVertex],
-        matrix: Option<Transform3D>,
-    ) -> Result<RenderInfo, DrawError> {
+    pub fn render(&mut self, pass: &mut RenderPass, backend: &RenderBackend, matrix: Option<Transform3D>, size: USize2D) -> Result<RenderInfo, Error> {
         let matrix = matrix.or(self.matrix).unwrap_or(self.window_matrix);
-        let vertex_buffer = VertexBuffer::new(display, vertices).unwrap();
-        let uniforms = uniform! {
-            atlas: self.texture
-                .sampled()
-                .minify_filter(MinifySamplerFilter::Nearest)
-                .magnify_filter(MagnifySamplerFilter::Nearest),
-            resolution: UPoint2D::from_tuple(surface.get_dimensions()).as_::<f32>().to_array(),
-            matrix: matrix.to_cols_array_2d(),
-        };
-
-        let vertices = vertex_buffer.len();
-
-        surface.draw(&vertex_buffer, NoIndices(PrimitiveType::LinesList), &self.shader, &uniforms, &DrawParameters {
-            blend: BLENDING,
-            ..DrawParameters::default()
-        })?;
-
-        Ok(RenderInfo { draw_calls: 1, vertices })
-    }
-
-    #[must_use = "RenderInfo itself needs to be extended into other"]
-    pub fn render<S: Surface>(&mut self, surface: &mut S, display: &WindowDisplay, matrix: Option<Transform3D>) -> Result<RenderInfo, DrawError> {
-        let matrix = matrix.or(self.matrix).unwrap_or(self.window_matrix);
-        let vertex_buffer = VertexBuffer::new(display, &self.buffers.vertices).unwrap();
-        let index_buffer = IndexBuffer::new(display, PrimitiveType::TrianglesList, &self.buffers.indices).unwrap();
+        let vertex_buffer: VertexBuffer<CommonVertex, ShapeShader> = backend.create_vertex_buffer(&self.buffers.vertices, &self.shader, false).unwrap();
+        let index_buffer = backend.create_index_buffer(ElementType::Triangles, &self.buffers.indices).unwrap();
 
         self.buffers.clear();
 
-        let uniforms = uniform! {
-            atlas: self.texture
-                .sampled()
-                .minify_filter(MinifySamplerFilter::Nearest)
-                .magnify_filter(MagnifySamplerFilter::Nearest),
-            resolution: UPoint2D::from_tuple(surface.get_dimensions()).as_::<f32>().to_array(),
-            matrix: matrix.to_cols_array_2d(),
-        };
+        // let uniforms = uniform! {
+        //     atlas: self.texture
+        //         .sampled()
+        //         .minify_filter(MinifySamplerFilter::Nearest)
+        //         .magnify_filter(MagnifySamplerFilter::Nearest),
+        //     resolution:
+        // UPoint2D::from_tuple(surface.get_dimensions()).as_::<f32>().to_array(),
+        //     matrix: matrix.to_cols_array_2d(),
+        // };
+
+        self.shader
+            .bind()
+            .with_uniform("atlas", &self.texture)
+            .with_uniform("resolution", size.as_vec2().to_array())
+            .with_uniform("matrix", matrix);
 
         let vertices = vertex_buffer.len();
 
-        surface.draw(&vertex_buffer, &index_buffer, &self.shader, &uniforms, &DrawParameters {
-            blend: BLENDING,
-            ..DrawParameters::default()
-        })?;
+        pass.apply_params(DrawParams {
+            blend: Some(Blend {
+                color: (BlendingFactor::SourceAlpha, BlendingFactor::OneMinusSourceAlpha),
+                alpha: (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),
+            }),
+            depth: None,
+            culling: None,
+        });
+
+        pass.draw_elements(&vertex_buffer, &index_buffer);
+        pass.reset_params();
+
+        // surface.draw(&vertex_buffer, &index_buffer, &self.shader, &uniforms,
+        // &DrawParameters {     blend: BLENDING,
+        //     ..DrawParameters::default()
+        // })?;
 
         Ok(RenderInfo { draw_calls: 1, vertices })
     }
 }
 
-#[cfg(all(feature = "shape-rendering", feature = "polymorpher"))]
-impl polymorpher::path::PathBuilder for Path {
-    type Path = Self;
+// #[cfg(all(feature = "shape-rendering", feature = "polymorpher"))]
+// impl polymorpher::path::PathBuilder for Path {
+//     type Path = Self;
 
-    fn move_to(&mut self, point: polymorpher::geometry::Point) {
-        self.begin(bytemuck::cast(point));
-    }
+//     fn move_to(&mut self, point: polymorpher::geometry::Point) {
+//         self.begin(bytemuck::cast(point));
+//     }
 
-    fn line_to(&mut self, point: polymorpher::geometry::Point) {
-        self.line_to(bytemuck::cast(point));
-    }
+//     fn line_to(&mut self, point: polymorpher::geometry::Point) {
+//         self.line_to(bytemuck::cast(point));
+//     }
 
-    fn cubic_to(&mut self, ctrl1: polymorpher::geometry::Point, ctrl2: polymorpher::geometry::Point, to: polymorpher::geometry::Point) {
-        self.cubic_bezier_to(bytemuck::cast(ctrl1), bytemuck::cast(ctrl2), bytemuck::cast(to));
-    }
+//     fn cubic_to(&mut self, ctrl1: polymorpher::geometry::Point, ctrl2:
+// polymorpher::geometry::Point, to: polymorpher::geometry::Point) {
+//         self.cubic_bezier_to(bytemuck::cast(ctrl1), bytemuck::cast(ctrl2),
+// bytemuck::cast(to));     }
 
-    fn close(&mut self) {
-        self.close();
-    }
+//     fn close(&mut self) {
+//         self.close();
+//     }
 
-    fn build(self) -> Self::Path {
-        self
-    }
-}
+//     fn build(self) -> Self::Path {
+//         self
+//     }
+// }

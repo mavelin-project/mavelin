@@ -141,7 +141,7 @@ impl Default for PlayerController {
         Self {
             yaw: 0.0,
             pitch: 0.0,
-            body: PhysicsBody::new(Point3D::Y, Self::PLAYER_SIZE.as_()),
+            body: PhysicsBody::new(Point3D::Y, Self::PLAYER_SIZE.as_vec3()),
             bob_time: 0.0,
             bob_offset: Point3D::ZERO,
             dash_time: 0.0,

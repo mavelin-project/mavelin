@@ -1,23 +1,14 @@
 use std::mem::replace;
 
 use ahash::{HashMap, HashMapExt};
-use glium::{
-    DrawParameters, IndexBuffer, Surface, Texture2d, VertexBuffer,
-    framebuffer::SimpleFrameBuffer,
-    index::PrimitiveType,
-    uniform,
-    uniforms::{MagnifySamplerFilter, MinifySamplerFilter},
-};
-#[cfg(feature = "shape-rendering")]
+use horns::{RenderBackend, RenderPass, Texture2d};
 use lyon_tessellation::{FillBuilder, TessellationError, path::builder::NoAttributes};
-use meralus_engine::WindowDisplay;
-use meralus_shared::{Color, Point2D, Point3D, Rect2D, Size2D, Transform3D, Vector2D};
-#[cfg(feature = "shape-rendering")]
-use meralus_shared::{RRect2D, Thickness};
+use meralus_shared::{Color, Point2D, Point3D, RRect, Rect, Size2D, Thickness, Transform3D, USize2D, Vector2D};
 
-#[cfg(feature = "image-rendering")] use crate::ObjectFit;
-#[cfg(feature = "image-rendering")] use crate::common::Path;
-use crate::{BLENDING, CommonRenderer, CommonVertex, VertexBuffers};
+use crate::render::{
+    RawRenderBuffer, RenderBuffer,
+    common::{CommonRenderer, CommonVertex, ObjectFit, Path},
+};
 
 pub struct RenderInfo {
     pub draw_calls: usize,
@@ -188,7 +179,7 @@ impl ArrangeStrategy for CenterStrategy {
             if context.parent(w) == widget && !context.widgets[w.0].abs_pos {
                 let child = context.layout_node(w);
 
-                context.translate(w, ((root.size - child.size) / 2.0).to_vector().to_point().max(Point2D::ZERO));
+                context.translate(w, ((root.size - child.size) / 2.0).max(Point2D::ZERO));
             }
         }
     }
@@ -212,7 +203,7 @@ pub enum Shape {
 }
 
 impl Shape {
-    fn paint(&self, renderer: &mut CommonRenderer, node: Rect2D) {
+    fn paint(&self, renderer: &mut CommonRenderer, node: Rect) {
         match self {
             Self::Noop => (),
             &Self::RRect(rounding, color) => _ = renderer.draw_round_rect(node.origin, node.size, rounding, color),
@@ -233,7 +224,7 @@ pub struct WidgetState {
 #[derive(Debug)]
 struct WidgetData {
     parent: WidgetId,
-    layout_node: Rect2D,
+    layout_node: Rect,
     abs_pos: bool,
     children: usize,
     shape: Shape,
@@ -246,7 +237,7 @@ pub struct UiContext {
     widgets: Vec<WidgetData>,
 }
 
-fn rect_contains(rect: &Rect2D, point: Point2D) -> bool {
+fn rect_contains(rect: &Rect, point: Point2D) -> bool {
     point.x > rect.origin.x && point.x < (rect.origin.x + rect.size.x) && point.y > rect.origin.y && point.y < (rect.origin.y + rect.size.y)
 }
 
@@ -255,7 +246,7 @@ impl UiContext {
         Self {
             widgets: vec![WidgetData {
                 parent: WidgetId(0),
-                layout_node: Rect2D::ZERO,
+                layout_node: Rect::ZERO,
                 abs_pos: false,
                 children: 0,
                 shape: Shape::Noop,
@@ -298,7 +289,7 @@ impl UiContext {
     }
 
     pub fn translate(&mut self, widget: WidgetId, offset: Point2D) {
-        self.widgets[widget.0].layout_node.origin += offset.to_vector();
+        self.widgets[widget.0].layout_node.origin += offset;
 
         for w in widget.into_iter(self.all_children(widget)) {
             if self.parent(w) == widget {
@@ -320,11 +311,11 @@ impl UiContext {
         self.widgets[widget.0].state
     }
 
-    pub fn layout_node(&self, widget: WidgetId) -> Rect2D {
+    pub fn layout_node(&self, widget: WidgetId) -> Rect {
         self.widgets[widget.0].layout_node
     }
 
-    pub fn layout_node_mut(&mut self, widget: WidgetId) -> &mut Rect2D {
+    pub fn layout_node_mut(&mut self, widget: WidgetId) -> &mut Rect {
         &mut self.widgets[widget.0].layout_node
     }
 
@@ -359,7 +350,7 @@ impl UiContext {
         if widgets < (id.0 + 1) {
             self.widgets.push(WidgetData {
                 parent,
-                layout_node: Rect2D::new(Point2D::ZERO, size),
+                layout_node: Rect::new(Point2D::ZERO, size),
                 abs_pos: false,
                 children: 0,
                 shape,
@@ -367,7 +358,7 @@ impl UiContext {
             });
         } else {
             self.widgets[id.0].parent = parent;
-            self.widgets[id.0].layout_node = Rect2D::new(Point2D::ZERO, size);
+            self.widgets[id.0].layout_node = Rect::new(Point2D::ZERO, size);
             self.widgets[id.0].abs_pos = false;
             self.widgets[id.0].children = 0;
             self.widgets[id.0].shape = shape;
@@ -375,7 +366,7 @@ impl UiContext {
     }
 
     pub fn root<'a>(&'a mut self, renderer: &'a CommonRenderer, size: Size2D) -> UiSubcontext<'a, RowStrategy, RowStrategy> {
-        self.widgets[0].layout_node = Rect2D::new(Point2D::ZERO, size);
+        self.widgets[0].layout_node = Rect::new(Point2D::ZERO, size);
         self.widgets[0].children = 0;
         self.widgets[0].abs_pos = false;
         self.widgets[0].shape = Shape::Noop;
@@ -597,16 +588,16 @@ impl<A: ArrangeStrategy, M: MeasureStrategy> Drop for UiSubcontext<'_, A, M> {
 pub struct RenderContext<'a> {
     common_renderer: &'a mut CommonRenderer,
     window_size: Size2D,
-    clip: Option<Rect2D>,
-    layers: HashMap<usize, (Texture2d, VertexBuffers<CommonVertex, u32>)>,
+    clip: Option<Rect>,
+    layers: HashMap<usize, (Texture2d, RawRenderBuffer<CommonVertex, u32>)>,
     current_layer: Option<usize>,
 
-    pub bounds: Rect2D,
+    pub bounds: Rect,
 }
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-#[cfg(feature = "shape-rendering")]
+
 pub struct NativeColor {
     pub red: u8,
     pub green: u8,
@@ -615,7 +606,7 @@ pub struct NativeColor {
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-#[cfg(feature = "shape-rendering")]
+
 pub struct NativeCornerRadius {
     pub top_left: f32,
     pub top_right: f32,
@@ -624,12 +615,10 @@ pub struct NativeCornerRadius {
 }
 
 impl<'a> RenderContext<'a> {
-    pub fn new(display: &WindowDisplay, common_renderer: &'a mut CommonRenderer) -> Self {
-        let (width, height) = display.get_framebuffer_dimensions();
-
+    pub fn new(common_renderer: &'a mut CommonRenderer, size: USize2D) -> Self {
         Self {
-            window_size: Size2D::new(width as f32, height as f32),
-            bounds: Rect2D::new(Point2D::ZERO, Size2D::new(width as f32, height as f32)),
+            window_size: size.as_vec2(),
+            bounds: Rect::new(Point2D::ZERO, size.as_vec2()),
             clip: None,
             common_renderer,
             layers: HashMap::new(),
@@ -637,21 +626,18 @@ impl<'a> RenderContext<'a> {
         }
     }
 
-    pub const fn get_bounds(&self) -> Rect2D {
+    pub const fn get_bounds(&self) -> Rect {
         self.bounds
     }
 
-    #[cfg(feature = "text-rendering")]
     pub fn measure_text<F: AsRef<str>, T: AsRef<str>>(&self, font: F, text: T, size: f32, max_width: Option<f32>) -> Option<Size2D> {
         self.common_renderer.measure(font, text, size, max_width)
     }
 
-    #[cfg(feature = "shape-rendering")]
     pub fn tessellate_with_color<F: FnOnce(&mut NoAttributes<FillBuilder>)>(&mut self, color: Color, tessellate: F) -> Result<(), TessellationError> {
         self.common_renderer.draw_shape(tessellate, color)
     }
 
-    #[cfg(feature = "text-rendering")]
     pub fn draw_text<F: Into<String>, T: Into<String>>(&mut self, position: Point2D, font: F, text: T, font_size: f32, color: Color, max_width: Option<f32>) {
         self.common_renderer
             .draw_text(position, font.into(), text.into(), color, font_size, max_width)
@@ -666,21 +652,18 @@ impl<'a> RenderContext<'a> {
         self.common_renderer.set_transform(None);
     }
 
-    #[cfg(feature = "text-rendering")]
     pub fn draw_text_native(&mut self, x: f32, y: f32, font: &&str, text: &&str, font_size: f32, color: &NativeColor) {
         self.common_renderer
             .draw_text(Point2D::new(x, y), font, text, Color::rgb(color.red, color.green, color.blue), font_size, None)
             .unwrap_or_else(|e| panic!("(native) failed to draw text with next params {x}x{y}, {font}-{font_size}, {text}: {e}"));
     }
 
-    #[cfg(feature = "image-rendering")]
     pub fn draw_image_native(&mut self, x: f32, y: f32, w: f32, h: f32, path: &&str, object_fit: &ObjectFit) {
         self.common_renderer
             .draw_image(Point2D::new(x, y), Size2D::new(w, h), path, *object_fit)
             .unwrap_or_else(|e| panic!("(native) failed to draw image with next params {x}x{y}, {w}x{h}, {path}: {e}"));
     }
 
-    #[cfg(all(feature = "shape-rendering", feature = "image-rendering"))]
     pub fn draw_round_image_native(&mut self, x: f32, y: f32, w: f32, h: f32, corner_radius: &NativeCornerRadius, path: &&str) {
         self.common_renderer
             .draw_round_image(
@@ -697,8 +680,7 @@ impl<'a> RenderContext<'a> {
             .unwrap_or_else(|e| panic!("(native) failed to draw rounded image with next params {x}x{y}, {w}x{h}, {path}: {e}"));
     }
 
-    #[cfg(feature = "image-rendering")]
-    pub fn draw_image<P: AsRef<std::path::Path>>(&mut self, rectangle: Rect2D, path: P) {
+    pub fn draw_image<P: AsRef<std::path::Path>>(&mut self, rectangle: Rect, path: P) {
         let path = path.as_ref();
 
         self.common_renderer
@@ -715,8 +697,7 @@ impl<'a> RenderContext<'a> {
             });
     }
 
-    #[cfg(all(feature = "shape-rendering", feature = "image-rendering"))]
-    pub fn draw_round_image<P: AsRef<std::path::Path>>(&mut self, rectangle: RRect2D, path: P) {
+    pub fn draw_round_image<P: AsRef<std::path::Path>>(&mut self, rectangle: RRect, path: P) {
         let path = path.as_ref();
 
         self.common_renderer
@@ -733,7 +714,6 @@ impl<'a> RenderContext<'a> {
             });
     }
 
-    #[cfg(all(feature = "shape-rendering", feature = "image-rendering"))]
     pub fn draw_image_path<P: AsRef<std::path::Path>>(&mut self, path: Path, image_path: P) {
         let image_path = image_path.as_ref();
 
@@ -742,7 +722,6 @@ impl<'a> RenderContext<'a> {
             .unwrap_or_else(|e| panic!("(native) failed to draw image path with next params {}: {e}", image_path.display()));
     }
 
-    #[cfg(feature = "shape-rendering")]
     pub fn draw_rrect_native(&mut self, x: f32, y: f32, w: f32, h: f32, corner_radius: &NativeCornerRadius, color: &NativeColor) {
         self.common_renderer
             .draw_round_rect(
@@ -759,15 +738,13 @@ impl<'a> RenderContext<'a> {
             .unwrap();
     }
 
-    #[cfg(feature = "shape-rendering")]
     pub fn draw_rect_native(&mut self, x: f32, y: f32, w: f32, h: f32, color: &NativeColor) {
         self.common_renderer
             .draw_rect(Point2D::new(x, y), Size2D::new(w, h), Color::rgb(color.red, color.green, color.blue))
             .unwrap();
     }
 
-    #[cfg(feature = "shape-rendering")]
-    pub fn draw_rect(&mut self, rectangle: Rect2D, color: Color) {
+    pub fn draw_rect(&mut self, rectangle: Rect, color: Color) {
         // if let Some(_transform) = self.matrix {
         //     // let (scale, _, translation) =
         //     // transform.to_scale_rotation_translation();
@@ -788,8 +765,7 @@ impl<'a> RenderContext<'a> {
         // }
     }
 
-    #[cfg(feature = "shape-rendering")]
-    pub fn draw_rounded_rect(&mut self, rectangle: RRect2D, color: Color) {
+    pub fn draw_rounded_rect(&mut self, rectangle: RRect, color: Color) {
         // if let Some(_transform) = self.matrix {
         //     // let (scale, _, translation) =
         //     // transform.to_scale_rotation_translation();
@@ -820,13 +796,13 @@ impl<'a> RenderContext<'a> {
         // }
     }
 
-    pub fn new_layer(&mut self, display: &WindowDisplay) {
+    pub fn new_layer(&mut self, backend: &RenderBackend) {
         let layer_idx = self.layers.len();
 
         self.layers.insert(
             layer_idx,
             (
-                Texture2d::empty(display, self.window_size.x as u32, self.window_size.y as u32).unwrap(),
+                backend.create_empty_texture2d(self.window_size.x as u32, self.window_size.y as u32).unwrap(),
                 std::mem::take(&mut self.common_renderer.buffers),
             ),
         );
@@ -834,7 +810,7 @@ impl<'a> RenderContext<'a> {
         self.current_layer = Some(layer_idx);
     }
 
-    // pub fn end_render_layer<S: Surface>(&mut self, display: &WindowDisplay,
+    // pub fn end_render_layer<S: Surface>(&mut self, backend: &RenderBackend,
     // surface: &mut S, color: Color, matrix: Option<Transform3D>) ->
     // Option<RenderInfo> {     if let Some(layer_idx) = self.current_layer.take()
     // {         let layer = self.layers.remove(&layer_idx);
@@ -897,15 +873,15 @@ impl<'a> RenderContext<'a> {
     //     }
     // }
 
-    pub fn finish<S: Surface>(self, display: &WindowDisplay, surface: &mut S) -> RenderInfo {
-        self.common_renderer.render(surface, display, None).unwrap()
+    pub fn finish(self, backend: &RenderBackend, pass: &mut RenderPass, size: USize2D) -> RenderInfo {
+        self.common_renderer.render(pass, backend, None, size).unwrap()
     }
 
-    pub fn ui<F: FnOnce(&mut RenderContext, Rect2D)>(&mut self, func: F) {
+    pub fn ui<F: FnOnce(&mut RenderContext, Rect)>(&mut self, func: F) {
         func(self, self.bounds);
     }
 
-    pub fn transformed<F: FnOnce(&mut RenderContext, Rect2D)>(&mut self, transform: Transform3D, func: F) {
+    pub fn transformed<F: FnOnce(&mut RenderContext, Rect)>(&mut self, transform: Transform3D, func: F) {
         self.add_transform(transform);
 
         func(self, self.bounds);
@@ -913,15 +889,14 @@ impl<'a> RenderContext<'a> {
         self.remove_transform();
     }
 
-    #[cfg(feature = "shape-rendering")]
     pub fn fill(&mut self, color: Color) {
         self.draw_rect(self.bounds, color);
     }
 
-    pub fn clipped<F: FnOnce(&mut RenderContext, Rect2D)>(&mut self, bounds: Rect2D, func: F) {
+    pub fn clipped<F: FnOnce(&mut RenderContext, Rect)>(&mut self, bounds: Rect, func: F) {
         self.clip.replace(bounds);
 
-        let mut bounds = bounds.to_box2();
+        let mut bounds = bounds.to_box2d();
         let max_y = bounds.max.y;
         let min_y = bounds.min.y;
 
@@ -938,13 +913,13 @@ impl<'a> RenderContext<'a> {
         self.clip.take();
     }
 
-    pub fn clipped_bounds<F: FnOnce(&mut RenderContext, Rect2D)>(&mut self, bounds: Rect2D, func: F) {
+    pub fn clipped_bounds<F: FnOnce(&mut RenderContext, Rect)>(&mut self, bounds: Rect, func: F) {
         let tmp = self.bounds;
 
         self.bounds = bounds;
         self.clip.replace(bounds);
 
-        let mut bounds = bounds.to_box2();
+        let mut bounds = bounds.to_box2d();
         let max_y = bounds.max.y;
         let min_y = bounds.min.y;
 
@@ -962,7 +937,7 @@ impl<'a> RenderContext<'a> {
         self.bounds = tmp;
     }
 
-    pub fn bounds<F: FnOnce(&mut RenderContext, Rect2D)>(&mut self, bounds: Rect2D, func: F) {
+    pub fn bounds<F: FnOnce(&mut RenderContext, Rect)>(&mut self, bounds: Rect, func: F) {
         let tmp = self.bounds;
 
         self.bounds = bounds;
@@ -972,14 +947,14 @@ impl<'a> RenderContext<'a> {
         self.bounds = tmp;
     }
 
-    pub fn padding<F: FnOnce(&mut RenderContext, Rect2D)>(&mut self, value: f32, func: F) {
+    pub fn padding<F: FnOnce(&mut RenderContext, Rect)>(&mut self, value: f32, func: F) {
         self.bounds.origin += Point2D::ONE * value;
         self.bounds.size -= Size2D::ONE * value * 2.0;
         self.bounds.size = self.bounds.size.max(Size2D::ZERO);
 
         func(self, self.bounds);
 
-        self.bounds.origin -= Point2D::ONE.to_vector() * value;
+        self.bounds.origin -= Point2D::ONE * value;
         self.bounds.size += Size2D::ONE * value * 2.0;
     }
 }

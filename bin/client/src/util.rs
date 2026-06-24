@@ -1,7 +1,7 @@
 use meralus_physics::Aabb;
-use meralus_shared::{Color, Face, Cube3D, Point2D, Point3D, Vector3D, Vector4D};
+use meralus_shared::{AsValue, Color, Cube3D, Face, Point2D, Point3D, Vector3D, Vector4D};
 
-use crate::input::Input;
+use crate::{input::Input, render::common::CommonVertex};
 
 const AMBIENT_OCCLUSION_VALUES: [f32; 4] = [0.55, 0.65, 0.8, 1.0];
 
@@ -100,15 +100,17 @@ pub fn cube_outline(Cube3D { origin, size }: Cube3D, white_pixel_uv: Point2D) ->
         vertices.extend([
             CommonVertex {
                 position: origin + Point3D::from_array(start),
-                color: Color::BLUE,
+                color: Color::BLUE.as_value(),
                 uv: white_pixel_uv,
                 clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+                _pad: [0; 8],
             },
             CommonVertex {
                 position: origin + Point3D::from_array(end),
-                color: Color::BLUE,
+                color: Color::BLUE.as_value(),
                 uv: white_pixel_uv,
                 clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+                _pad: [0; 8],
             },
         ]);
 
@@ -138,15 +140,17 @@ pub fn aabb_outline(Aabb { min, max }: Aabb, white_pixel_uv: Point2D) -> Vec<Com
         vertices.extend([
             CommonVertex {
                 position: min.as_vec3() + Point3D::from_array(start),
-                color: Color::BLUE,
+                color: Color::BLUE.as_value(),
                 uv: white_pixel_uv,
                 clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+                _pad: [0; 8],
             },
             CommonVertex {
                 position: min.as_vec3() + Point3D::from_array(end),
-                color: Color::BLUE,
+                color: Color::BLUE.as_value(),
                 uv: white_pixel_uv,
                 clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+                _pad: [0; 8],
             },
         ]);
 

@@ -19,24 +19,21 @@ mod util;
 mod world;
 
 use std::{
-    env::consts::{ARCH, OS},
-    f32, fmt,
+    f32,
     path::PathBuf,
     sync::{Arc, mpsc},
     time::Duration,
 };
 
 use cpal::traits::HostTrait;
-use discord_presence::models::{ActivityType, DisplayType};
+use horns::{MagnifyFilter, MinifyFilter, RenderBackend, Texture2d};
 use kira::{AudioManager, AudioManagerSettings, backend::cpal::CpalBackendSettings};
-use meralus_engine::{Application, CursorGrabMode, KeyCode, KeyboardModifiers, MouseButton, State, WindowContext, WindowDisplay};
+use meralus_engine::{Application, CursorGrabMode, KeyCode, KeyboardModifiers, MouseButton, State, WindowContext};
 use meralus_physics::{Aabb, AabbSource, PhysicsContext};
-use meralus_shared::{
-    Angle, Color, IPoint2D, IPoint3D, Lerp, MatrixExt, Point2D, Point3D, Quat, RRect2D, Rect2D, Size2D, Thickness, Transform3D, USize2D, USizePoint3D,
-    Vector2D, Vector3D,
-};
+use meralus_shared::{Color, IPoint2D, IPoint3D, Lerp, Point2D, Point3D, Quat, Rect, Size2D, Transform3D, USize2D, USizePoint3D, Vector2D, Vector3D};
 use meralus_storage::{Block, ResourceStorage, TextureStorage};
-use meralus_world::{BfsLight, BlockSource, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, SubChunkBlockState};
+use meralus_tween::{Animation, Tween};
+use meralus_world::{BfsLight, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, SubChunkBlockState};
 use tracing::info;
 use tracy_client::{set_thread_name, span};
 
@@ -48,10 +45,15 @@ use crate::{
     camera::Camera,
     input::Input,
     player::{Item, ItemType, PlayerController},
-    posteffects::{ParticleSystem, WorldScene, kawase::DualKawase},
+    // posteffects::{ParticleSystem, WorldScene, kawase::DualKawase},
     progress::{Progress, ProgressInfo, ProgressSender},
+    render::{
+        chunk::{VoxelFace, VoxelMeshBuilder},
+        common::{CommonRenderer, CommonVertex},
+        context::{ArrangeStrategy, MeasureStrategy, RenderContext, RenderInfo, UiContext, UiSubcontext, WidgetState},
+    },
     scenes::{Screen, loading_overlay::LoadingOverlay},
-    util::{aabb_outline, cube_outline, get_movement_direction, get_rotation_directions, vertex_ao},
+    util::{cube_outline, get_movement_direction, get_rotation_directions, vertex_ao},
     world::{EntityData, EntityManager, World, WorldType},
 };
 
@@ -63,7 +65,7 @@ pub const FIXED_FRAMERATE: Duration = Duration::from_secs(1).checked_div(60).exp
 const _TEXT_COLOR: Color = Color::from_hsl(120.0, 0.5, 0.4);
 const _BG_COLOR: Color = Color::from_hsl(120.0, 0.4, 0.75);
 
-fn get_sky_color((after_day, progress): (bool, f32), weather: f32) -> Color {
+pub(crate) fn get_sky_color((after_day, progress): (bool, f32), weather: f32) -> Color {
     let day_color: Color = Color::from_hsl(220.0, 0.2f32.mul_add(weather, 0.5), 0.6f32.mul_add(-weather, 0.75));
     let night_color: Color = Color::from_hsl(220.0, 0.1f32.mul_add(weather, 0.35), 0.15f32.mul_add(-weather, 0.25));
 
@@ -301,12 +303,11 @@ impl Default for Settings {
 struct GameLoop {
     audio_manager: AudioManager,
     input: Input,
-    animation_player: AnimationPlayer,
+    // animation_player: AnimationPlayer,
     common_renderer: CommonRenderer,
     resource_manager: Arc<ResourceStorage>,
 
-    particles: ParticleSystem,
-
+    // particles: ParticleSystem,
     action_receiver: mpsc::Receiver<Action>,
 
     #[cfg(feature = "addons")]
@@ -315,8 +316,8 @@ struct GameLoop {
     debug_interval: Interval,
     fixed_interval: Interval,
 
-    scene: WorldScene,
-    kawase: DualKawase<4>,
+    // scene: WorldScene,
+    // kawase: DualKawase<4>,
     texture_atlas: Texture2d,
     lightmap_atlas: Texture2d,
 
@@ -327,8 +328,6 @@ struct GameLoop {
 
     world: Option<World>,
     settings: Settings,
-
-    drpc: discord_presence::Client,
 }
 
 const INVENTORY_HOTBAR_SLOTS: u8 = 8;
@@ -349,7 +348,7 @@ fn register_block<T: Block + 'static>(
 impl State for GameLoop {
     type Args = ();
 
-    fn new(window: WindowContext, display: &WindowDisplay, _: Self::Args) -> Self {
+    fn new(window: WindowContext, backend: &RenderBackend, _: Self::Args) -> Self {
         let (tx, rx) = mpsc::channel();
         let (action_sender, action_receiver) = mpsc::channel();
 
@@ -450,23 +449,17 @@ impl State for GameLoop {
             sender.set_visible(false)
         });
 
-        let (width, height) = display.get_framebuffer_dimensions();
-
         let size = window.window_size().as_vec2() / window.window_scale_factor() as f32;
 
-        let mut common_renderer = CommonRenderer::new(display).unwrap_or_else(|e| panic!("failed to create CommonRenderer: {e}"));
+        let mut common_renderer = CommonRenderer::new(backend).unwrap_or_else(|e| panic!("failed to create CommonRenderer: {e}"));
 
-        common_renderer.add_font("default", FONT);
-        common_renderer.add_font("default_bold", FONT_BOLD);
+        common_renderer.add_font("default", include_bytes!("../../../resources/fonts/Monocraft.ttf"));
+        common_renderer.add_font("default_bold", include_bytes!("../../../resources/fonts/Monocraft-Bold.ttf"));
         common_renderer.set_window_matrix(Transform3D::orthographic_rh_gl(0.0, size.x, size.y, 0.0, -100.0, 100.0));
 
-        let mut animation_player = AnimationPlayer::default();
+        // let mut animation_player = AnimationPlayer::default();
 
         // init_animation_player(&mut animation_player);
-
-        let mut drpc = discord_presence::Client::new(1488208518765871164);
-
-        drpc.start();
 
         // let sounds = fs::read_dir("./resources/sounds")
         //     .unwrap()
@@ -502,7 +495,7 @@ impl State for GameLoop {
                 ("walk.left", KeyCode::KeyA),
                 ("walk.right", KeyCode::KeyD),
             ]),
-            animation_player,
+            // animation_player,
             common_renderer,
             current_page: Page::Main,
             resource_manager,
@@ -514,36 +507,29 @@ impl State for GameLoop {
             world: None,
             settings: Settings::default(),
             progress: Progress::new(rx),
-            texture_atlas: Texture2d::empty_with_mipmaps(
-                display,
-                MipmapsOption::EmptyMipmapsMax(4),
-                TextureStorage::ATLAS_SIZE.into(),
-                TextureStorage::ATLAS_SIZE.into(),
-            )
-            .unwrap_or_else(|e| panic!("failed to create empty texture atlas on GPU: {e}")),
-            lightmap_atlas: Texture2d::empty_with_mipmaps(
-                display,
-                MipmapsOption::EmptyMipmapsMax(4),
-                TextureStorage::ATLAS_SIZE.into(),
-                TextureStorage::ATLAS_SIZE.into(),
-            )
-            .unwrap_or_else(|e| panic!("failed to create empty texture atlas on GPU: {e}")),
-            scene: WorldScene::new(display, width, height).unwrap(),
-            kawase: DualKawase::new(display, width, height).unwrap(),
-            drpc,
+            texture_atlas: backend
+                .create_empty_texture2d_with_mipmaps(TextureStorage::ATLAS_SIZE.into(), TextureStorage::ATLAS_SIZE.into(), 4)
+                .unwrap_or_else(|e| panic!("failed to create empty texture atlas on GPU: {e}")),
+            lightmap_atlas: backend
+                .create_empty_texture2d_with_mipmaps(TextureStorage::ATLAS_SIZE.into(), TextureStorage::ATLAS_SIZE.into(), 4)
+                .unwrap_or_else(|e| panic!("failed to create empty texture atlas on GPU: {e}")),
+            // scene: WorldScene::new(backend, width, height).unwrap(),
+            // kawase: DualKawase::new(backend, width, height).unwrap(),
             context: UiContext::new(),
-            particles: ParticleSystem::new(display),
+            // particles: ParticleSystem::new(backend),
             overlay: LoadingOverlay {
-                progress: TypedTransition::new(0.0, 1.0, 1000, Curve::LINEAR, RepeatMode::Once),
+                progress: Tween::new(0.0, 1.0, 1000),
             },
         }
     }
 
-    fn handle_window_resize(&mut self, facade: &WindowDisplay, size: USize2D, scale_factor: f64) {
-        self.scene.resize(facade, size.to_array()).unwrap();
-        self.kawase.resize(facade, size.to_array()).unwrap();
+    fn handle_window_resize(&mut self, facade: &RenderBackend, size: USize2D, scale_factor: f64) {
+        // self.scene.resize(facade, size.to_array()).unwrap();
+        // self.kawase.resize(facade, size.to_array()).unwrap();
 
         let size = size.as_vec2() / scale_factor as f32;
+
+        println!("window matrix: {size:?}");
 
         self.common_renderer
             .set_window_matrix(Transform3D::orthographic_rh_gl(0.0, size.x, size.y, 0.0, -1000.0, 1000.0));
@@ -641,19 +627,17 @@ impl State for GameLoop {
     }
 
     #[allow(clippy::too_many_lines, clippy::significant_drop_tightening)]
-    fn update(&mut self, context: WindowContext, display: &WindowDisplay, delta: Duration) {
+    fn update(&mut self, context: WindowContext, backend: &RenderBackend, delta: Duration) {
         self.overlay.update(delta);
 
         if let Some(info) = &self.progress.info {
-            self.overlay.progress.to(info.completed as f32 / info.total as f32);
-
             if self.overlay.progress.is_finished() {
-                self.overlay.progress.reset();
+                // self.overlay.progress.();
+                self.overlay.progress.set(info.completed as f32 / info.total as f32);
             }
         }
 
-        self.progress
-            .update(&mut self.animation_player, &self.texture_atlas, &self.lightmap_atlas, &self.resource_manager);
+        self.progress.update(&self.texture_atlas, &self.lightmap_atlas, &self.resource_manager);
 
         if let Some(world) = self.world.as_mut() {
             if world.player_controllable {
@@ -668,7 +652,7 @@ impl State for GameLoop {
 
                     let context = PhysicsContext::new(provider);
 
-                    self.particles.physics_update(&context, FIXED_FRAMERATE.as_secs_f32());
+                    // self.particles.physics_update(&context, FIXED_FRAMERATE.as_secs_f32());
 
                     if let Some(entity) = world.entities.get_mut(0) {
                         entity.set_rotation(0, world.player.get_vector_for_rotation().as_vec3());
@@ -684,19 +668,6 @@ impl State for GameLoop {
         }
 
         for _ in 0..self.debug_interval.update(delta) {
-            let mut drpc = self.drpc.clone();
-            let chunks = self.world.as_ref().map(|world| world.chunk_manager.len());
-
-            std::thread::spawn(move || {
-                drpc.set_activity(|activity| {
-                    activity
-                        .activity_type(ActivityType::Playing)
-                        .details(chunks.map_or_else(|| String::from("In Main Menu"), |chunks| format!("In world ({chunks} loaded chunks)")))
-                        .status_display(DisplayType::Details)
-                })
-                .expect("Failed to set activity");
-            });
-
             if let Some(world) = self.world.as_mut() {
                 world.ticks = world.tick_sum;
                 world.tick_sum = 0;
@@ -721,12 +692,12 @@ impl State for GameLoop {
             }
         }
 
-        self.animation_player.advance(delta.as_secs_f32());
+        // self.animation_player.advance(delta.as_secs_f32());
 
         if let Some(world) = &mut self.world {
             for (_, drop) in &mut world.entities {
                 if let EntityData::Item { transition, .. } = &mut drop.data {
-                    transition.advance(delta.as_secs_f32());
+                    transition.advance(delta);
                 }
             }
         }
@@ -792,22 +763,22 @@ impl State for GameLoop {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn render(&mut self, window_context: WindowContext, display: &WindowDisplay, delta: Duration) {
+    fn render(&mut self, window_context: WindowContext, backend: &RenderBackend, delta: Duration) {
         let RenderInfo { draw_calls, vertices } = RenderInfo::default();
 
-        let (width, height) = display.get_framebuffer_dimensions();
-        let mut frame = display.draw();
+        let (width, height) = window_context.window_size().into();
+        let mut frame = backend.begin_pass();
 
         if let Some(world) = self.world.as_mut() {
-            let mut buffer = self.scene.buffer(display);
+            let mut buffer = &mut frame; // self.scene.buffer(backend);
 
             let progress = world.clock.get_progress();
 
             world
-                .voxel_renderer
+                .chunk_renderer
                 .set_sun_position(if progress > 0.5 { 1.0 - progress } else { progress } * 2.0);
 
-            buffer.clear_color_and_depth((0.0, 0.0, 0.0, 1.0), 1.0);
+            buffer.clear_color_and_depth(Color::BLACK.to_linear_rgba(), 1.0);
 
             self.common_renderer
                 .draw_rect(
@@ -817,22 +788,16 @@ impl State for GameLoop {
                 )
                 .unwrap();
 
-            self.common_renderer.render(&mut buffer, display, None).unwrap();
+            self.common_renderer.render(buffer, backend, None, window_context.window_size()).unwrap();
 
-            world.voxel_renderer.render(
-                &mut buffer,
+            world.chunk_renderer.render(
+                backend,
+                buffer,
                 world.camera.position,
                 &world.camera.frustum,
                 world.camera.matrix(),
-                self.texture_atlas
-                    .sampled()
-                    .minify_filter(MinifySamplerFilter::NearestMipmapLinear)
-                    .magnify_filter(MagnifySamplerFilter::Nearest),
-                self.lightmap_atlas
-                    .sampled()
-                    .minify_filter(MinifySamplerFilter::NearestMipmapLinear)
-                    .magnify_filter(MagnifySamplerFilter::Nearest),
-                false,
+                self.texture_atlas.with_filters(MinifyFilter::NearestMipmapLinear, MagnifyFilter::Nearest),
+                self.lightmap_atlas.with_filters(MinifyFilter::NearestMipmapLinear, MagnifyFilter::Nearest),
             );
 
             let mut builder = VoxelMeshBuilder::with_capacity(world.entities.len());
@@ -842,24 +807,18 @@ impl State for GameLoop {
             }
 
             builder.render(
-                &world.voxel_renderer,
+                backend,
+                &world.chunk_renderer,
                 &mut buffer,
-                false,
                 world.camera.matrix(),
-                self.texture_atlas
-                    .sampled()
-                    .minify_filter(MinifySamplerFilter::NearestMipmapLinear)
-                    .magnify_filter(MagnifySamplerFilter::Nearest),
-                self.lightmap_atlas
-                    .sampled()
-                    .minify_filter(MinifySamplerFilter::NearestMipmapLinear)
-                    .magnify_filter(MagnifySamplerFilter::Nearest),
+                self.texture_atlas.with_filters(MinifyFilter::NearestMipmapLinear, MagnifyFilter::Nearest),
+                self.lightmap_atlas.with_filters(MinifyFilter::NearestMipmapLinear, MagnifyFilter::Nearest),
             );
 
-            self.kawase.apply(display, &self.scene).unwrap();
+            // self.kawase.apply(backend, &self.scene).unwrap();
 
-            self.scene.render(&mut frame).unwrap();
-            self.particles.render(&mut frame, world.camera.matrix()).unwrap();
+            // self.scene.render(&mut frame).unwrap();
+            // self.particles.render(&mut frame, world.camera.matrix()).unwrap();
             // self.debugging.render_info.extend(&world.voxel_renderer.get_debug_info());
 
             // if self.debugging.draw_borders {
@@ -908,10 +867,10 @@ impl State for GameLoop {
 
                 self.common_renderer.set_matrix(world.camera.matrix());
                 // self.debugging.render_info.extend(
-                &self
-                    .common_renderer
-                    .render_lines(&mut frame, display, &aabb_outline(model, white_pixel), None)
-                    .unwrap();
+                // &self
+                //     .common_renderer
+                //     .render_lines(&mut frame, backend, &aabb_outline(model, white_pixel),
+                // None)     .unwrap();
                 // );
 
                 self.common_renderer.set_default_matrix();
@@ -951,7 +910,7 @@ impl State for GameLoop {
             //     self.shape_renderer.set_default_matrix();
             // }
 
-            let mut context = RenderContext::new(display, &mut self.common_renderer);
+            let mut context = RenderContext::new(&mut self.common_renderer, window_context.window_size());
             let bounds = context.bounds;
 
             // if self.debugging.wireframe {
@@ -960,7 +919,7 @@ impl State for GameLoop {
             //         let y_offset = bounds.size.y - height;
 
             //         context.draw_rect(
-            //             Rect2D::new(Point2D::new(0.0, y_offset), Size2D::new(480.0,
+            //             Rect::new(Point2D::new(0.0, y_offset), Size2D::new(480.0,
             // height)),             Color::from_hsl(0.0, 0.0, 0.5),
             //         );
 
@@ -994,14 +953,14 @@ impl State for GameLoop {
 
                 let offset = f32::from(world.inventory_slot.value) * SLOT_SIZE;
 
-                context.draw_rect(Rect2D::new(origin, Size2D::new(hotbar_width, SLOT_SIZE)), Color::from_hsl(0.0, 0.0, 0.5));
+                context.draw_rect(Rect::new(origin, Size2D::new(hotbar_width, SLOT_SIZE)), Color::from_hsl(0.0, 0.0, 0.5));
                 context.draw_rect(
-                    Rect2D::new(origin + Point2D::new(offset, 0.0), Size2D::new(SLOT_SIZE, SLOT_SIZE)),
+                    Rect::new(origin + Point2D::new(offset, 0.0), Size2D::new(SLOT_SIZE, SLOT_SIZE)),
                     Color::from_hsl(0.0, 0.0, 0.8),
                 );
 
                 context.draw_rect(
-                    Rect2D::new(
+                    Rect::new(
                         origin + Point2D::new(4.0, 4.0) + Point2D::new(offset, 0.0),
                         Size2D::new(SLOT_SIZE - 8.0, SLOT_SIZE - 8.0),
                     ),
@@ -1026,7 +985,7 @@ impl State for GameLoop {
                     Quat::IDENTITY,
                     screen_center.extend(0.0) * (1.0 - scale),
                 ));
-                context.bounds(Rect2D::new(center, size), |context, _| {
+                context.bounds(Rect::new(center, size), |context, _| {
                     context.fill(Color::from_hsl(130.0, 0.35, 0.25).with_alpha(opacity));
 
                     context.padding(2.0, |context, bounds| {
@@ -1048,12 +1007,12 @@ impl State for GameLoop {
                             let tile_size =
                                 (inner_size - Size2D::new((tile_count as f32 - 1.0) * tile_gap, (tile_count as f32 - 1.0) * tile_gap)) / tile_count as f32;
 
-                            context.draw_rect(Rect2D::new(origin, size), Color::from_hsl(130.0, 0.5, 0.75).with_alpha(opacity));
+                            context.draw_rect(Rect::new(origin, size), Color::from_hsl(130.0, 0.5, 0.75).with_alpha(opacity));
 
                             for x in 0..tile_count {
                                 for y in 0..tile_count {
                                     context.draw_rect(
-                                        Rect2D::new(
+                                        Rect::new(
                                             inner_origin + Point2D::new((tile_gap + tile_size.x) * x as f32, (tile_gap + tile_size.y) * y as f32),
                                             tile_size,
                                         ),
@@ -1080,9 +1039,9 @@ impl State for GameLoop {
                     (hours, minutes)
                 };
 
-                let version = display.get_opengl_version_string();
-                let rendered_chunks = world.voxel_renderer.rendered_chunks();
-                let total_chunks = world.voxel_renderer.total_chunks();
+                let version = backend.get_opengl_version_string();
+                let rendered_chunks = world.chunk_renderer.rendered_chunks();
+                let total_chunks = world.chunk_renderer.total_chunks();
 
                 let text = format!(
                     "OpenGL {version}
@@ -1099,9 +1058,9 @@ Draw calls: {draw_calls}
 Rotation: {} {} {}
 Rendered chunks: {rendered_chunks} / {total_chunks}
 Rendered vertices: {vertices}",
-                    display.get_opengl_renderer_string(),
-                    display.get_opengl_vendor_string(),
-                    display.get_free_video_memory().map_or_else(|| String::from("unknown"), util::format_bytes),
+                    backend.get_opengl_renderer_string(),
+                    backend.get_opengl_vendor_string(),
+                    backend.get_free_video_memory().map_or_else(|| String::from("unknown"), util::format_bytes),
                     world.player.body.position,
                     chunk.x,
                     chunk.y,
@@ -1146,7 +1105,7 @@ Rendered vertices: {vertices}",
 
                 let overlay_width = 1.0; // self.animation_player.get_value_unchecked::<_, f32>("overlay-width");
 
-                let text_bounds = Rect2D::new(Point2D::new(12.0, 12.0), Size2D::new((522.0 + 4.0) * overlay_width, text_size.y + 4.0));
+                let text_bounds = Rect::new(Point2D::new(12.0, 12.0), Size2D::new((522.0 + 4.0) * overlay_width, text_size.y + 4.0));
 
                 context.bounds(text_bounds, |context, _| {
                     context.fill(Color::BLACK.with_alpha(0.25));
@@ -1163,13 +1122,13 @@ Rendered vertices: {vertices}",
             //     show_world_generation_screen(&self.animation_player, &mut context,
             // &world.chunks_progress, self.window_matrix); }
 
-            context.finish(display, &mut frame);
+            context.finish(backend, &mut frame, window_context.window_size());
 
             let mut builder = VoxelMeshBuilder::with_capacity(world.player.inventory.get_hotbar_items().count());
 
-            let matrix = Transform3D::from_rotation_x(Angle::from_radians(const { 200f32.to_radians() }))
-                * Transform3D::from_rotation_y(Angle::from_radians(const { 35f32.to_radians() }))
-                * Transform3D::from_rotation_z(Angle::from_radians(0.0));
+            let matrix = Transform3D::from_rotation_x(const { 200f32.to_radians() })
+                * Transform3D::from_rotation_y(const { 35f32.to_radians() })
+                * Transform3D::from_rotation_z(0.0);
 
             for (i, item) in world.player.inventory.get_hotbar_items() {
                 const SIZE: f32 = SLOT_SIZE * 0.75;
@@ -1201,21 +1160,15 @@ Rendered vertices: {vertices}",
             }
 
             builder.render_full_bright(
-                &world.voxel_renderer,
+                backend,
+                &world.chunk_renderer,
                 &mut frame,
-                false,
                 self.common_renderer.window_matrix(),
-                self.texture_atlas
-                    .sampled()
-                    .minify_filter(MinifySamplerFilter::NearestMipmapLinear)
-                    .magnify_filter(MagnifySamplerFilter::Nearest),
-                self.lightmap_atlas
-                    .sampled()
-                    .minify_filter(MinifySamplerFilter::NearestMipmapLinear)
-                    .magnify_filter(MagnifySamplerFilter::Nearest),
+                self.texture_atlas.with_filters(MinifyFilter::NearestMipmapLinear, MagnifyFilter::Nearest),
+                self.lightmap_atlas.with_filters(MinifyFilter::NearestMipmapLinear, MagnifyFilter::Nearest),
             );
 
-            let mut context = RenderContext::new(display, &mut self.common_renderer);
+            let mut context = RenderContext::new(&mut self.common_renderer, window_context.window_size());
 
             context.ui(|context, bounds| {
                 let hotbar_width = f32::from(INVENTORY_HOTBAR_SLOTS + 1) * SLOT_SIZE;
@@ -1245,7 +1198,7 @@ Rendered vertices: {vertices}",
                 );
 
                 context.clipped_bounds(
-                    Rect2D::new(Point2D::new(bounds.size.x - CHUNK_UI_CONTAINER_SIZE.x - 12.0, 12.0), CHUNK_UI_CONTAINER_SIZE),
+                    Rect::new(Point2D::new(bounds.size.x - CHUNK_UI_CONTAINER_SIZE.x - 12.0, 12.0), CHUNK_UI_CONTAINER_SIZE),
                     |context, bounds| {
                         context.fill(Color::BLACK);
 
@@ -1273,7 +1226,7 @@ Rendered vertices: {vertices}",
                                     };
 
                                     context.draw_rect(
-                                        Rect2D::new(
+                                        Rect::new(
                                             origin - player_offset + Vector2D::new(x as f32 * CHUNK_UI_SIZE.x, z as f32 * CHUNK_UI_SIZE.y),
                                             CHUNK_UI_SIZE,
                                         ),
@@ -1283,16 +1236,14 @@ Rendered vertices: {vertices}",
                             }
                         }
 
-                        context.draw_rect(Rect2D::new(origin - Vector2D::splat(1.0), Size2D::splat(2.0)), Color::RED);
+                        context.draw_rect(Rect::new(origin - Vector2D::splat(1.0), Size2D::splat(2.0)), Color::RED);
                     },
                 );
             });
 
-            context.finish(display, &mut frame);
+            context.finish(backend, &mut frame, window_context.window_size());
         } else {
-            let [r, g, b] = Color::from_u32_rgb(0x1D211B).to_linear();
-
-            frame.clear_color_and_depth((r, g, b, 1.0), 1.0);
+            frame.clear_color_and_depth(Color::from_u32_rgb(0x1D211B).to_linear_rgba(), 1.0);
 
             let mut root = self.context.root(&self.common_renderer, window_context.window_size().as_vec2());
 
@@ -1323,7 +1274,7 @@ Rendered vertices: {vertices}",
                                 root: PathBuf::from("./worlds/WRD128-0"),
                             });
 
-                            let mut world = World::new(display, self.resource_manager.clone(), chunk_manager, WorldType::Local);
+                            let mut world = World::new(backend, self.resource_manager.clone(), chunk_manager, WorldType::Local);
 
                             world.player.inventory.try_insert(Item {
                                 id: "game:torch".to_owned(),
@@ -1452,13 +1403,13 @@ Rendered vertices: {vertices}",
             }
 
             self.context.paint_root(&mut self.common_renderer);
-            self.common_renderer.render(&mut frame, display, None).unwrap();
+            self.common_renderer.render(&mut frame, backend, None, window_context.window_size()).unwrap();
         }
-
-        frame.finish().expect("failed to finish draw frame");
 
         self.input.mouse.clear();
         self.input.keyboard.clear();
+
+        frame.finish(backend);
     }
 }
 
@@ -1467,352 +1418,376 @@ enum Page {
     Main,
 }
 
-impl Page {
-    fn render(
-        &self,
-        window_context: WindowContext,
-        display: &WindowDisplay,
-        frame: &mut glium::Frame,
-        common_renderer: &mut CommonRenderer,
-        animation_player: &mut AnimationPlayer,
-        debugging: &mut Debugging,
-        input: &mut Input,
-        progress: &Progress,
-    ) -> Option<Self> {
-        let mut context = RenderContext::new(display, common_renderer);
+// impl Page {
+//     fn render(
+//         &self,
+//         window_context: WindowContext,
+//         display: &WindowDisplay,
+//         frame: &mut glium::Frame,
+//         common_renderer: &mut CommonRenderer,
+//         animation_player: &mut AnimationPlayer,
+//         debugging: &mut Debugging,
+//         input: &mut Input,
+//         progress: &Progress,
+//     ) -> Option<Self> {
+//         let mut context = RenderContext::new(display, common_renderer);
 
-        let page = match self {
-            Self::Options => OptionsPage::render(window_context, &mut context, animation_player, input),
-            Self::Main => MainPage::render(window_context, &mut context, animation_player, input),
-        };
+//         let page = match self {
+//             Self::Options => OptionsPage::render(window_context, &mut
+// context, animation_player, input),             Self::Main =>
+// MainPage::render(window_context, &mut context, animation_player, input),
+//         };
 
-        if animation_player.get_value::<_, f32>("progress-opacity") > Some(0.0) {
-            show_loading_screen(animation_player, &mut context, progress);
-        }
+//         if animation_player.get_value::<_, f32>("progress-opacity") >
+// Some(0.0) {             show_loading_screen(animation_player, &mut context,
+// progress);         }
 
-        debugging.render_info.extend(&context.finish(display, frame));
+//         debugging.render_info.extend(&context.finish(display, frame));
 
-        page
-    }
-}
+//         page
+//     }
+// }
 
-struct WorldCreationPage;
+// struct WorldCreationPage;
 
-impl WorldCreationPage {
-    const fn render(_window_context: WindowContext, _context: &mut RenderContext, _animation_player: &mut AnimationPlayer, _input: &Input) -> Option<Page> {
-        None
-    }
-}
+// impl WorldCreationPage {
+//     const fn render(_window_context: WindowContext, _context: &mut
+// RenderContext, _animation_player: &mut AnimationPlayer, _input: &Input) ->
+// Option<Page> {         None
+//     }
+// }
 
-struct OptionsPage;
+// struct OptionsPage;
 
-impl OptionsPage {
-    fn render(_: WindowContext, _: &mut RenderContext, _: &mut AnimationPlayer, _: &Input) -> Option<Page> {
-        None
-    }
-}
+// impl OptionsPage {
+//     fn render(_: WindowContext, _: &mut RenderContext, _: &mut
+// AnimationPlayer, _: &Input) -> Option<Page> {         None
+//     }
+// }
 
-struct MainPage;
+// struct MainPage;
 
-impl MainPage {
-    fn render(window_context: WindowContext, context: &mut RenderContext, animation_player: &mut AnimationPlayer, input: &mut Input) -> Option<Page> {
-        let mut page = None;
+// impl MainPage {
+//     fn render(window_context: WindowContext, context: &mut RenderContext,
+// animation_player: &mut AnimationPlayer, input: &mut Input) -> Option<Page> {
+//         let mut page = None;
 
-        context.ui(|context, bounds| {
-            let text_scaling: f32 = animation_player.get_value_unchecked("text-scaling");
-            let text_opacity = 1.0 - animation_player.get_value::<_, f32>("progress-opacity").unwrap_or(0.0);
+//         context.ui(|context, bounds| {
+//             let text_scaling: f32 =
+// animation_player.get_value_unchecked("text-scaling");             let
+// text_opacity = 1.0 - animation_player.get_value::<_,
+// f32>("progress-opacity").unwrap_or(0.0);
 
-            let size = context
-                .measure_text("default", "Meralus", 72.0, None)
-                .unwrap_or_else(|| panic!("failed to measure next text: Meralus"));
-            let offset = Point2D::new(bounds.size.x / 2.0 - size.x / 2.0, 24.0);
+//             let size = context
+//                 .measure_text("default", "Meralus", 72.0, None)
+//                 .unwrap_or_else(|| panic!("failed to measure next text:
+// Meralus"));             let offset = Point2D::new(bounds.size.x / 2.0 -
+// size.x / 2.0, 24.0);
 
-            context.draw_text(
-                bounds.origin + offset,
-                "default",
-                "Meralus",
-                72.0,
-                Color::from_hsl(110.0, 0.4, 0.7).with_alpha(text_opacity),
-                None,
-            );
+//             context.draw_text(
+//                 bounds.origin + offset,
+//                 "default",
+//                 "Meralus",
+//                 72.0,
+//                 Color::from_hsl(110.0, 0.4, 0.7).with_alpha(text_opacity),
+//                 None,
+//             );
 
-            let origin = bounds.origin + offset + size;
-            let size = context.measure_text("default", "hiii wrld!!", 36.0, None).unwrap();
+//             let origin = bounds.origin + offset + size;
+//             let size = context.measure_text("default", "hiii wrld!!", 36.0,
+// None).unwrap();
 
-            context.transformed(
-                Transform3D::from_translation(origin.extend(0.0))
-                    .scale(Vector3D::splat(text_scaling))
-                    .rotate_z(-20f32.to_radians())
-                    .translate(-origin.extend(0.0)),
-                |context, _| {
-                    context.draw_text(
-                        origin - size / 2.0,
-                        "default",
-                        "hiii wrld!!",
-                        36.0,
-                        Color::from_hsl(200.0, 0.8, 0.6).with_alpha(text_opacity),
-                        None,
-                    );
-                },
-            );
+//             context.transformed(
+//                 Transform3D::from_translation(origin.extend(0.0))
+//                     .scale(Vector3D::splat(text_scaling))
+//                     .rotate_z(-20f32.to_radians())
+//                     .translate(-origin.extend(0.0)),
+//                 |context, _| {
+//                     context.draw_text(
+//                         origin - size / 2.0,
+//                         "default",
+//                         "hiii wrld!!",
+//                         36.0,
+//                         Color::from_hsl(200.0, 0.8,
+// 0.6).with_alpha(text_opacity),                         None,
+//                     );
+//                 },
+//             );
 
-            context.draw_text(
-                bounds.origin + Point2D::new(8.0, bounds.size.y - 24.0),
-                "default",
-                format!("developer build for {OS} (arch: {ARCH}), v{}", env!("CARGO_PKG_VERSION")),
-                18.0,
-                Color::from_hsl(110.0, 0.6, 0.6).with_alpha(text_opacity),
-                None,
-            );
+//             context.draw_text(
+//                 bounds.origin + Point2D::new(8.0, bounds.size.y - 24.0),
+//                 "default",
+//                 format!("developer build for {OS} (arch: {ARCH}), v{}",
+// env!("CARGO_PKG_VERSION")),                 18.0,
+//                 Color::from_hsl(110.0, 0.6, 0.6).with_alpha(text_opacity),
+//                 None,
+//             );
 
-            let button_width = (bounds.size.x * 0.4).max(192.0);
-            let mut start = bounds.origin + Point2D::new(bounds.size.x / 2.0 - button_width / 2.0, bounds.size.y / 2.0 - 68.0);
+//             let button_width = (bounds.size.x * 0.4).max(192.0);
+//             let mut start = bounds.origin + Point2D::new(bounds.size.x / 2.0
+// - button_width / 2.0, bounds.size.y / 2.0 - 68.0);
 
-            for (i, button) in MenuButton::ALL.into_iter().enumerate() {
-                let animation = format!("menu-button-{i}");
+//             for (i, button) in MenuButton::ALL.into_iter().enumerate() {
+//                 let animation = format!("menu-button-{i}");
 
-                if !animation_player.contains(&animation) {
-                    animation_player.add(&animation, || {
-                        Transition::new(
-                            Color::from_u32_rgb(0x3C4B38),
-                            Color::from_u32_rgb(0x3C4B38),
-                            200,
-                            Curve::LINEAR,
-                            RepeatMode::Once,
-                        )
-                    });
-                }
+//                 if !animation_player.contains(&animation) {
+//                     animation_player.add(&animation, || {
+//                         Transition::new(
+//                             Color::from_u32_rgb(0x3C4B38),
+//                             Color::from_u32_rgb(0x3C4B38),
+//                             200,
+//                             Curve::LINEAR,
+//                             RepeatMode::Once,
+//                         )
+//                     });
+//                 }
 
-                let box_bounds = RRect2D::new(start, Size2D::new(button_width, 40.0), Thickness::all(8.0));
+//                 let box_bounds = RRect::new(start, Size2D::new(button_width,
+// 40.0), Thickness::all(8.0));
 
-                if box_bounds.contains(input.mouse.position) {
-                    if input.mouse.entered.insert(i) {
-                        animation_player.get_mut(&animation).unwrap().to(Color::from_u32_rgb(0x5E7558));
-                        animation_player.play(&animation);
-                    }
-                } else if input.mouse.entered.remove(&i) {
-                    animation_player.get_mut(&animation).unwrap().to(Color::from_u32_rgb(0x3C4B38));
-                    animation_player.play(&animation);
-                }
+//                 if box_bounds.contains(input.mouse.position) {
+//                     if input.mouse.entered.insert(i) {
+//
+// animation_player.get_mut(&animation).unwrap().
+// to(Color::from_u32_rgb(0x5E7558));
+// animation_player.play(&animation);                     }
+//                 } else if input.mouse.entered.remove(&i) {
+//
+// animation_player.get_mut(&animation).unwrap().
+// to(Color::from_u32_rgb(0x3C4B38));
+// animation_player.play(&animation);                 }
 
-                if input.mouse.is_pressed_once(MouseButton::Left) && box_bounds.contains(input.mouse.position) {
-                    match button {
-                        MenuButton::Play => page = Some(Page::Options),
-                        MenuButton::Options => page = Some(Page::Options),
-                        MenuButton::Exit => window_context.close_window(),
-                    }
-                }
+//                 if input.mouse.is_pressed_once(MouseButton::Left) &&
+// box_bounds.contains(input.mouse.position) {                     match button
+// {                         MenuButton::Play => page = Some(Page::Options),
+//                         MenuButton::Options => page = Some(Page::Options),
+//                         MenuButton::Exit => window_context.close_window(),
+//                     }
+//                 }
 
-                context.draw_rounded_rect(box_bounds, animation_player.get_value_unchecked(&animation));
+//                 context.draw_rounded_rect(box_bounds,
+// animation_player.get_value_unchecked(&animation));
 
-                let size = context.measure_text("default", button.as_str(), 36.0, None).unwrap();
+//                 let size = context.measure_text("default", button.as_str(),
+// 36.0, None).unwrap();
 
-                context.draw_text(
-                    start + Point2D::new((bounds.size.x * 0.4) / 2.0 - size.x / 2.0, 0.0),
-                    "default",
-                    button.as_str(),
-                    36.0,
-                    Color::from_u32_rgb(0xD6E8CE),
-                    None,
-                );
+//                 context.draw_text(
+//                     start + Point2D::new((bounds.size.x * 0.4) / 2.0 - size.x
+// / 2.0, 0.0),                     "default",
+//                     button.as_str(),
+//                     36.0,
+//                     Color::from_u32_rgb(0xD6E8CE),
+//                     None,
+//                 );
 
-                start.y += 48.0;
-            }
-        });
+//                 start.y += 48.0;
+//             }
+//         });
 
-        // {
-        //     let progress: f32 = animation_player.get_value_unchecked("text-scaling");
-        //     let origin = Point2D::new(48.0, 48.0);
-        //     let width = 64.0;
-        //     let height = 48.0;
-        //     let pixel_size = 4.0;
-        //     let real_width = width * progress * pixel_size;
-        //     let real_width = real_width - (real_width % pixel_size);
+//         // {
+//         //     let progress: f32 =
+// animation_player.get_value_unchecked("text-scaling");         //     let
+// origin = Point2D::new(48.0, 48.0);         //     let width = 64.0;
+//         //     let height = 48.0;
+//         //     let pixel_size = 4.0;
+//         //     let real_width = width * progress * pixel_size;
+//         //     let real_width = real_width - (real_width % pixel_size);
 
-        //     for w in 0..49u16 {
-        //         context.draw_rect(
-        //             Rect2D::new(origin + Point2D::new(0.0, f32::from(w) *
-        // pixel_size), Size2D::new(width * pixel_size, 1.0)),
-        // Color::BLUE,         );
-        //     }
+//         //     for w in 0..49u16 {
+//         //         context.draw_rect(
+//         //             Rect::new(origin + Point2D::new(0.0, f32::from(w) *
+//         // pixel_size), Size2D::new(width * pixel_size, 1.0)),
+//         // Color::BLUE,         );
+//         //     }
 
-        //     for h in 0..65u16 {
-        //         context.draw_rect(
-        //             Rect2D::new(origin + Point2D::new(f32::from(h) * pixel_size,
-        // 0.0), Size2D::new(1.0, height * pixel_size)),
-        // Color::BLUE,         );
-        //     }
+//         //     for h in 0..65u16 {
+//         //         context.draw_rect(
+//         //             Rect::new(origin + Point2D::new(f32::from(h) *
+// pixel_size,         // 0.0), Size2D::new(1.0, height * pixel_size)),
+//         // Color::BLUE,         );
+//         //     }
 
-        //     // LEFT
-        //     context.draw_rect(Rect2D::new(origin, Size2D::new(pixel_size, height *
-        // pixel_size)), Color::RED);     // TOP
-        //     context.draw_rect(Rect2D::new(origin, Size2D::new(real_width,
-        // pixel_size)), Color::RED);     // RIGHT
-        //     context.draw_rect(
-        //         Rect2D::new(origin + Point2D::new(real_width, 0.0),
-        // Size2D::new(pixel_size, (height + 1.0) * pixel_size)),
-        //         Color::RED,
-        //     );
-        //     // BOTTOM
-        //     context.draw_rect(
-        //         Rect2D::new(origin + Point2D::new(0.0, height * pixel_size),
-        // Size2D::new(real_width, pixel_size)),         Color::RED,
-        //     );
-        // }
+//         //     // LEFT
+//         //     context.draw_rect(Rect::new(origin, Size2D::new(pixel_size,
+// height *         // pixel_size)), Color::RED);     // TOP
+//         //     context.draw_rect(Rect::new(origin, Size2D::new(real_width,
+//         // pixel_size)), Color::RED);     // RIGHT
+//         //     context.draw_rect(
+//         //         Rect::new(origin + Point2D::new(real_width, 0.0),
+//         // Size2D::new(pixel_size, (height + 1.0) * pixel_size)),
+//         //         Color::RED,
+//         //     );
+//         //     // BOTTOM
+//         //     context.draw_rect(
+//         //         Rect::new(origin + Point2D::new(0.0, height * pixel_size),
+//         // Size2D::new(real_width, pixel_size)),         Color::RED,
+//         //     );
+//         // }
 
-        {
-            let p: f32 = animation_player.get_value_unchecked("text-scaling");
-            let xm = 32.0;
-            let ym = 32.0;
-            let pixel_size = 1.0;
-            let r = 32.0 * p * pixel_size;
-            let mut r = r - (r % pixel_size);
+//         {
+//             let p: f32 =
+// animation_player.get_value_unchecked("text-scaling");             let xm =
+// 32.0;             let ym = 32.0;
+//             let pixel_size = 1.0;
+//             let r = 32.0 * p * pixel_size;
+//             let mut r = r - (r % pixel_size);
 
-            let mut x = -r;
-            let mut y = 0.0;
-            let mut err = 2.0 - 2.0 * r;
-            let pixel_size = 4.0;
+//             let mut x = -r;
+//             let mut y = 0.0;
+//             let mut err = 2.0 - 2.0 * r;
+//             let pixel_size = 4.0;
 
-            loop {
-                context.draw_rect(
-                    Rect2D::new(Point2D::new((xm - x) * pixel_size, (ym + y) * pixel_size), Size2D::splat(pixel_size)),
-                    Color::RED,
-                );
-                context.draw_rect(
-                    Rect2D::new(Point2D::new((xm - y) * pixel_size, (ym - x) * pixel_size), Size2D::splat(pixel_size)),
-                    Color::RED,
-                );
-                context.draw_rect(
-                    Rect2D::new(Point2D::new((xm + x) * pixel_size, (ym - y) * pixel_size), Size2D::splat(pixel_size)),
-                    Color::RED,
-                );
-                context.draw_rect(
-                    Rect2D::new(Point2D::new((xm + y) * pixel_size, (ym + x) * pixel_size), Size2D::splat(pixel_size)),
-                    Color::RED,
-                );
+//             loop {
+//                 context.draw_rect(
+//                     Rect::new(Point2D::new((xm - x) * pixel_size, (ym + y) *
+// pixel_size), Size2D::splat(pixel_size)),                     Color::RED,
+//                 );
+//                 context.draw_rect(
+//                     Rect::new(Point2D::new((xm - y) * pixel_size, (ym - x) *
+// pixel_size), Size2D::splat(pixel_size)),                     Color::RED,
+//                 );
+//                 context.draw_rect(
+//                     Rect::new(Point2D::new((xm + x) * pixel_size, (ym - y) *
+// pixel_size), Size2D::splat(pixel_size)),                     Color::RED,
+//                 );
+//                 context.draw_rect(
+//                     Rect::new(Point2D::new((xm + y) * pixel_size, (ym + x) *
+// pixel_size), Size2D::splat(pixel_size)),                     Color::RED,
+//                 );
 
-                r = err;
+//                 r = err;
 
-                if r <= y {
-                    y += 1.0;
-                    err += y * 2.0 + 1.0;
-                }
+//                 if r <= y {
+//                     y += 1.0;
+//                     err += y * 2.0 + 1.0;
+//                 }
 
-                if r > x || err > y {
-                    x += 1.0;
-                    err += x * 2.0 + 1.0;
-                }
+//                 if r > x || err > y {
+//                     x += 1.0;
+//                     err += x * 2.0 + 1.0;
+//                 }
 
-                if x >= 0.0 {
-                    break;
-                }
-            }
-        }
+//                 if x >= 0.0 {
+//                     break;
+//                 }
+//             }
+//         }
 
-        page
-    }
-}
+//         page
+//     }
+// }
 
-enum MenuButton {
-    Play,
-    Options,
-    Exit,
-}
+// enum MenuButton {
+//     Play,
+//     Options,
+//     Exit,
+// }
 
-impl MenuButton {
-    pub const ALL: [Self; 3] = [Self::Play, Self::Options, Self::Exit];
+// impl MenuButton {
+//     pub const ALL: [Self; 3] = [Self::Play, Self::Options, Self::Exit];
 
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Play => "Play",
-            Self::Options => "Options",
-            Self::Exit => "Exit",
-        }
-    }
-}
+//     pub const fn as_str(&self) -> &'static str {
+//         match self {
+//             Self::Play => "Play",
+//             Self::Options => "Options",
+//             Self::Exit => "Exit",
+//         }
+//     }
+// }
 
-impl fmt::Display for MenuButton {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+// impl fmt::Display for MenuButton {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         f.write_str(self.as_str())
+//     }
+// }
 
-fn show_loading_screen(animation_player: &AnimationPlayer, context: &mut RenderContext, progress: &Progress) {
-    let opacity = animation_player.get_value_unchecked("progress-opacity");
+// fn show_loading_screen(animation_player: &AnimationPlayer, context: &mut
+// RenderContext, progress: &Progress) {     let opacity =
+// animation_player.get_value_unchecked("progress-opacity");
 
-    context.ui(|context, bounds| {
-        context.fill(Color::from_u32_rgb(0x3C4B38).with_alpha(opacity));
+//     context.ui(|context, bounds| {
+//         context.fill(Color::from_u32_rgb(0x3C4B38).with_alpha(opacity));
 
-        let progress_bar = Size2D::new(bounds.size.x * 0.8, 48.0);
-        let stages_progress_bar = bounds.origin + (bounds.size / 2.0) - (progress_bar / 2.0);
+//         let progress_bar = Size2D::new(bounds.size.x * 0.8, 48.0);
+//         let stages_progress_bar = bounds.origin + (bounds.size / 2.0) -
+// (progress_bar / 2.0);
 
-        if let Some(name) = progress.info.as_ref().and_then(|info| info.current_stage_name.as_ref()) {
-            context.draw_text(
-                stages_progress_bar - Point2D::new(0.0, 44.0),
-                "default",
-                name,
-                36.0,
-                Color::from_u32_rgb(0xA2D398).with_alpha(opacity),
-                None,
-            );
-        }
+//         if let Some(name) = progress.info.as_ref().and_then(|info|
+// info.current_stage_name.as_ref()) {             context.draw_text(
+//                 stages_progress_bar - Point2D::new(0.0, 44.0),
+//                 "default",
+//                 name,
+//                 36.0,
+//                 Color::from_u32_rgb(0xA2D398).with_alpha(opacity),
+//                 None,
+//             );
+//         }
 
-        context.bounds(Rect2D::new(stages_progress_bar, progress_bar), |context, _| {
-            context.fill(Color::from_u32_rgb(0xA2D398).with_alpha(opacity));
+//         context.bounds(Rect::new(stages_progress_bar, progress_bar),
+// |context, _| {
+// context.fill(Color::from_u32_rgb(0xA2D398).with_alpha(opacity));
 
-            context.padding(2.0, |context, _| {
-                context.fill(Color::from_u32_rgb(0x3C4B38).with_alpha(opacity));
+//             context.padding(2.0, |context, _| {
+//
+// context.fill(Color::from_u32_rgb(0x3C4B38).with_alpha(opacity));
 
-                if progress.info.is_some() {
-                    let progress: f32 = animation_player.get_value_unchecked("stage-progress");
+//                 if progress.info.is_some() {
+//                     let progress: f32 =
+// animation_player.get_value_unchecked("stage-progress");
 
-                    context.padding(2.0, |context, bounds| {
-                        context.draw_rect(
-                            Rect2D::new(bounds.origin, Size2D::new(bounds.size.x * progress, bounds.size.y)),
-                            Color::from_u32_rgb(0xA2D398).with_alpha(opacity),
-                        );
-                    });
-                }
-            });
-        });
+//                     context.padding(2.0, |context, bounds| {
+//                         context.draw_rect(
+//                             Rect::new(bounds.origin,
+// Size2D::new(bounds.size.x * progress, bounds.size.y)),
+// Color::from_u32_rgb(0xA2D398).with_alpha(opacity),                         );
+//                     });
+//                 }
+//             });
+//         });
 
-        context.bounds(
-            Rect2D::new(stages_progress_bar + Point2D::new(0.0, progress_bar.y + 8.0), progress_bar),
-            |context, _| {
-                context.fill(Color::from_u32_rgb(0xA2D398).with_alpha(opacity));
+//         context.bounds(
+//             Rect::new(stages_progress_bar + Point2D::new(0.0, progress_bar.y
+// + 8.0), progress_bar),             |context, _| {
+//
+// context.fill(Color::from_u32_rgb(0xA2D398).with_alpha(opacity));
 
-                context.padding(2.0, |context, _| {
-                    context.fill(Color::from_u32_rgb(0x3C4B38).with_alpha(opacity));
+//                 context.padding(2.0, |context, _| {
+//
+// context.fill(Color::from_u32_rgb(0x3C4B38).with_alpha(opacity));
 
-                    if progress.info.is_some() {
-                        let progress: f32 = animation_player.get_value_unchecked("stage-substage-progress");
-                        let translation: f32 = animation_player.get_value_unchecked("stage-substage-translation");
+//                     if progress.info.is_some() {
+//                         let progress: f32 =
+// animation_player.get_value_unchecked("stage-substage-progress");
+// let translation: f32 =
+// animation_player.get_value_unchecked("stage-substage-translation");
 
-                        context.padding(2.0, |context, bounds| {
-                            context.clipped(bounds, |context, bounds| {
-                                context.draw_rect(
-                                    Rect2D::new(
-                                        bounds.origin,
-                                        Size2D::new(
-                                            bounds.size.x
-                                                * if translation < 0.0 {
-                                                    animation_player.get_value_unchecked("stage-previous-progress")
-                                                } else {
-                                                    progress
-                                                },
-                                            bounds.size.y * (1.0 + translation),
-                                        ),
-                                    ),
-                                    Color::from_u32_rgb(0xA2D398).with_alpha(opacity),
-                                );
-                            });
-                        });
-                    }
-                });
-            },
-        );
-    });
-}
+//                         context.padding(2.0, |context, bounds| {
+//                             context.clipped(bounds, |context, bounds| {
+//                                 context.draw_rect(
+//                                     Rect::new(
+//                                         bounds.origin,
+//                                         Size2D::new(
+//                                             bounds.size.x
+//                                                 * if translation < 0.0 {
+//                                                   animation_player.
+//                                                   get_value_unchecked("
+//                                                   stage-previous-progress")
+//                                                 } else {
+//                                                     progress
+//                                                 },
+//                                             bounds.size.y * (1.0 +
+// translation),                                         ),
+//                                     ),
+//
+// Color::from_u32_rgb(0xA2D398).with_alpha(opacity),
+// );                             });
+//                         });
+//                     }
+//                 });
+//             },
+//         );
+//     });
+// }
 
 pub struct AabbProvider<'a, C: ChunkCache> {
     pub chunk_manager: &'a ChunkManager<C>,
@@ -1940,7 +1915,7 @@ fn main() {
     ));
 
     tracy_client::register_demangler!();
-    tracy_client::Client::start();
+    // tracy_client::Client::start();
 
     Application::<GameLoop>::new(()).start().expect("failed to run app");
 }

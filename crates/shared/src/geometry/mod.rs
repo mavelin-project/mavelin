@@ -4,7 +4,7 @@ mod rect;
 mod round_rect;
 mod thickness;
 
-pub use self::{box2d::Box2D, cube::Cube3D, rect::Rect, round_rect::RRect2D, thickness::Thickness};
+pub use self::{box2d::Box2D, cube::Cube3D, rect::Rect, round_rect::RRect, thickness::Thickness};
 
 pub type ISize2D = glam::IVec2;
 pub type ISize3D = glam::IVec3;

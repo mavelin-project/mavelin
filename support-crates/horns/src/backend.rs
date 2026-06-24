@@ -1,5 +1,6 @@
 use std::{num::NonZeroU32, rc::Rc};
 
+use glow::HasContext;
 use glutin::{
     config::ConfigTemplate,
     context::{ContextApi, ContextAttributesBuilder, NotCurrentGlContext, PossiblyCurrentContext},
@@ -72,26 +73,80 @@ impl RenderBackend {
             NonZeroU32::new(height).ok_or_else(|| glutin::error::Error::from(glutin::error::ErrorKind::NotSupported("window height can't be zero")))?,
         );
 
+        unsafe { self.gl.viewport(0, 0, width.cast_signed(), height.cast_signed()) };
+
         Ok(())
     }
 
+    #[inline]
     pub fn create_empty_texture2d(&self, width: u32, height: u32) -> Result<Texture2d, Error> {
         Texture2d::empty(&self.gl, width, height)
     }
 
-    pub fn create_vertex_buffer<V: Vertex>(&self, vertices: &[V], is_dynamic: bool) -> Result<VertexBuffer<V>, Error> {
-        VertexBuffer::new(&self.gl, vertices, is_dynamic)
+    #[inline]
+    pub fn create_empty_texture2d_with_mipmaps(&self, width: u32, height: u32, levels: usize) -> Result<Texture2d, Error> {
+        Texture2d::empty_with_mipmaps(&self.gl, width, height, levels)
     }
 
+    #[inline]
+    pub fn create_vertex_buffer<V: Vertex, S: Shader>(&self, vertices: &[V], shader: &Program, is_dynamic: bool) -> Result<VertexBuffer<V, S>, Error> {
+        VertexBuffer::new(&self.gl, shader, vertices, is_dynamic)
+    }
+
+    #[inline]
     pub fn create_index_buffer<I: GlPrimitive>(&self, element_type: ElementType, indices: &[I]) -> Result<IndexBuffer<I>, Error> {
         IndexBuffer::new(&self.gl, element_type, indices)
     }
 
+    #[inline]
     pub fn create_program<T: Shader>(&self, source: &T) -> Result<Program, Error> {
         Program::new(&self.gl, source)
     }
 
+    #[inline]
+    pub fn get_opengl_version(&self) -> &glow::Version {
+        self.gl.version()
+    }
+
+    #[inline]
+    pub fn get_opengl_vendor_string(&self) -> String {
+        unsafe { self.gl.get_parameter_string(glow::VENDOR) }
+    }
+
+    #[inline]
+    pub fn get_opengl_version_string(&self) -> String {
+        unsafe { self.gl.get_parameter_string(glow::VERSION) }
+    }
+
+    #[inline]
+    pub fn get_opengl_renderer_string(&self) -> String {
+        unsafe { self.gl.get_parameter_string(glow::RENDERER) }
+    }
+
+    pub fn get_free_video_memory(&self) -> Option<usize> {
+        let extensions = self.gl.supported_extensions();
+
+        if extensions.contains("GL_NVX_gpu_memory_info") {
+            let value = unsafe { self.gl.get_parameter_i32(0x9049) };
+
+            Some(value as usize * 1024)
+        } else if extensions.contains("GL_ATI_meminfo") {
+            let value = unsafe { self.gl.get_parameter_i32(0x87FC) };
+
+            Some(value as usize * 1024)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
     pub fn begin_pass(&self) -> RenderPass {
-        RenderPass { backend: self }
+        RenderPass {
+            gl: self.gl.clone(),
+            blend: None,
+            depth: None,
+            finished: false,
+            culling: None,
+        }
     }
 }

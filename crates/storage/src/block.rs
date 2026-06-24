@@ -1,8 +1,8 @@
 use std::{fs, path::Path};
 
 use ahash::HashMap;
-use meralus_shared::Color;
 use meralus_io::{BlockModel, TexturePath, TextureRef};
+use meralus_shared::Color;
 
 use crate::{LoadingError, LoadingResult, Mappings, ModelLoadingError, texture::TextureStorage};
 

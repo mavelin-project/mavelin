@@ -151,7 +151,7 @@ impl<T: State> ApplicationHandler for Application<T> {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::Resized(physical_size) => self.window.inspect_mut(move |window| {
-                _ = window.backend.resize(physical_size.width, physical_size.height);
+                window.backend.resize(physical_size.width, physical_size.height).unwrap();
 
                 window.state.handle_window_resize(
                     &window.backend,

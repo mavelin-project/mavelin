@@ -1,7 +1,4 @@
-use std::{
-    collections::VecDeque,
-    time::{Duration, Instant},
-};
+use std::collections::VecDeque;
 
 use meralus_shared::{Face, IPoint2D, USizePoint3D};
 
@@ -141,22 +138,9 @@ impl<'a, C: ChunkAccess> BfsLight<'a, C> {
             }
         }
 
-        let mut get_block_unchecked = Duration::ZERO;
-        let mut get_block_unchecked_t = 0;
-        let mut get_local_sky_light = Duration::ZERO;
-        let mut get_local_sky_light_t = 0;
-        let mut get_sky_light = Duration::ZERO;
-        let mut get_sky_light_t = 0;
-        let mut set_sky_light = Duration::ZERO;
-        let mut set_sky_light_t = 0;
-
         while let Some(node) = self.sky_addition_queue.pop_front() {
             let world_position = Chunk::to_world_pos(node.1, node.0);
-            let get_local_sky_light_i = Instant::now();
             let light_level = self.chunk_manager.get_local_sky_light(node.1, node.0);
-
-            get_local_sky_light += get_local_sky_light_i.elapsed();
-            get_local_sky_light_t += 1;
 
             for face in [Face::Left, Face::Right, Face::Back, Face::Front, Face::Bottom, Face::Top] {
                 let (chunk, position) = Chunk::to_origin_and_local(world_position + face.as_normal());
@@ -166,66 +150,23 @@ impl<'a, C: ChunkAccess> BfsLight<'a, C> {
                         continue;
                     }
 
-                    let get_block_unchecked_i = Instant::now();
                     let [subchunk, y] = Chunk::get_subchunk_index(position.y);
                     let index = SubChunk::index_of(position.with_y(y));
                     let block = chunk.get_block_by_idx_unchecked(subchunk, index);
 
-                    get_block_unchecked += get_block_unchecked_i.elapsed();
-                    get_block_unchecked_t += 1;
-
                     let skip_decrease = face == Face::Bottom && light_level == 15;
 
-                    if !block_source.blocks_light(&block.name) && {
-                        let get_sky_light_i = Instant::now();
-                        let value = chunk.get_sky_light_by_idx(subchunk, index);
-
-                        get_sky_light += get_sky_light_i.elapsed();
-                        get_sky_light_t += 1;
-
-                        value
-                    } + 2
-                        <= light_level
-                    {
+                    if !block_source.blocks_light(&block.name) && chunk.get_sky_light_by_idx(subchunk, index) + 2 <= light_level {
                         let light_consumed = block_source.light_consumption(&block.name);
 
                         chunk.dirty = true;
-
-                        let set_sky_light_i = Instant::now();
-
                         chunk.set_sky_light(position, light_level - light_consumed - u8::from(!skip_decrease));
-
-                        set_sky_light += set_sky_light_i.elapsed();
-                        set_sky_light_t += 1;
 
                         self.sky_addition_queue.push_back(LightNode(position, chunk.origin));
                     }
                 }
             }
         }
-
-        let sum = get_block_unchecked + get_local_sky_light + get_sky_light + set_sky_light;
-
-        tracing::info!(
-            "get_block_unchecked avg takes ~{:?}, {}%",
-            get_block_unchecked / get_block_unchecked_t,
-            (get_block_unchecked.as_secs_f32() / sum.as_secs_f32()) * 100.0
-        );
-        tracing::info!(
-            "get_local_sky_light avg takes ~{:?}, {}%",
-            get_local_sky_light / get_local_sky_light_t,
-            (get_local_sky_light.as_secs_f32() / sum.as_secs_f32()) * 100.0
-        );
-        tracing::info!(
-            "get_sky_light avg takes ~{:?}, {}%",
-            get_sky_light / get_sky_light_t,
-            (get_sky_light.as_secs_f32() / sum.as_secs_f32()) * 100.0
-        );
-        tracing::info!(
-            "set_sky_light avg takes ~{:?}, {}%",
-            set_sky_light / set_sky_light_t,
-            (set_sky_light.as_secs_f32() / sum.as_secs_f32()) * 100.0
-        );
     }
 }
 

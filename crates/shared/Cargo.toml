@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-glam = { version = "0.30.10", features = ["bytemuck"], optional = true }
+bytemuck = { version = "1.25.0", optional = true }
+glam = { version = "0.33.1", features = ["bytemuck"], optional = true }
 serde = { workspace = true, optional = true }
 
 [features]
@@ -13,7 +14,7 @@ color = []
 convert = []
 face = []
 frustum = []
-geometry = ["dep:glam"]
+geometry = ["dep:glam", "dep:bytemuck"]
 lerp = []
 random = []
 serde = ["dep:serde", "glam?/serde"]

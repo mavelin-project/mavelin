@@ -1,5 +1,6 @@
 use std::{borrow::Cow, mem::replace, sync::mpsc};
 
+use horns::Texture2d;
 use meralus_storage::ResourceStorage;
 
 pub enum ProgressChange {
@@ -98,41 +99,19 @@ impl Progress {
 
                     if !visible {
                         for (mipmap, image) in resource_manager.get_mipmaps().iter().enumerate() {
-                            if let Some(texture) = texture.mipmap(mipmap as u32) {
-                                texture.write(
-                                    Rect {
-                                        left: 0,
-                                        bottom: 0,
-                                        width: image.width(),
-                                        height: image.height(),
-                                    },
-                                    RawImage2d {
-                                        data: Cow::Borrowed(image.as_raw()),
-                                        width: image.width(),
-                                        height: image.height(),
-                                        format: ClientFormat::U8U8U8U8,
-                                    },
-                                );
-                            }
+                            let texture = texture.writable_mipmap(mipmap);
+
+                            println!("Writing mipmap {mipmap}...");
+
+                            _ = image.save(format!("mip-{mipmap}.png"));
+
+                            texture.write(0, 0, image.width(), image.height(), image.as_raw());
                         }
 
                         for (mipmap, image) in resource_manager.get_lightmap_mipmaps().iter().enumerate() {
-                            if let Some(lightmap) = lightmap.mipmap(mipmap as u32) {
-                                lightmap.write(
-                                    Rect {
-                                        left: 0,
-                                        bottom: 0,
-                                        width: image.width(),
-                                        height: image.height(),
-                                    },
-                                    RawImage2d {
-                                        data: Cow::Borrowed(image.as_raw()),
-                                        width: image.width(),
-                                        height: image.height(),
-                                        format: ClientFormat::U8U8U8U8,
-                                    },
-                                );
-                            }
+                            let lightmap = lightmap.writable_mipmap(mipmap);
+
+                            lightmap.write(0, 0, image.width(), image.height(), image.as_raw());
                         }
                     }
                 }

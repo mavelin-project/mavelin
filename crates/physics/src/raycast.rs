@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use meralus_shared::{DPoint3D, DVector3D, IPoint3D, Face};
+use meralus_shared::{DPoint3D, DVector3D, Face, IPoint3D};
 
 use crate::{Aabb, AabbSource, PhysicsContext};
 
