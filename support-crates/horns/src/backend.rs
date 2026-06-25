@@ -28,7 +28,7 @@ impl RenderBackend {
         Self: Sized,
     {
         let window = window.as_raw();
-	#[cfg(not(windows), not(target_os = "macos"))]
+	#[cfg(all(not(windows), not(target_os = "macos")))]
         let display = unsafe { Display::new(display.as_raw(), DisplayApiPreference::EglThenGlx(Box::new(|_| {}))) }?;
 	#[cfg(windows)]
         let display = unsafe { Display::new(display.as_raw(), DisplayApiPreference::EglThenWgl(Some(window))) }?;
