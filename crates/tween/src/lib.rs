@@ -158,14 +158,16 @@ impl<T: Lerp + Clone> Tween<T> {
     }
 
     pub fn get_elapsed(&self) -> u64 {
+        let elapsed = self.elapsed.saturating_sub(self.delay);
+
         match self.repeat {
-            RepeatMode::Once => self.elapsed.min(self.get_duration()),
-            RepeatMode::Times(_) => self.elapsed.min(self.get_duration()) % (self.get_duration() + 1),
+            RepeatMode::Once => elapsed.min(self.get_duration()),
+            RepeatMode::Times(_) => elapsed.min(self.get_duration()) % (self.get_duration() + 1),
             RepeatMode::Infinite => {
-                if self.is_backwards() && self.elapsed >= self.get_duration() {
-                    self.get_duration() - (self.elapsed.min(self.get_duration() * 2) - self.get_duration())
+                if self.is_backwards() && elapsed >= self.get_duration() {
+                    self.get_duration() - (elapsed.min(self.get_duration() * 2) - self.get_duration())
                 } else {
-                    self.elapsed.min(self.get_duration())
+                    elapsed.min(self.get_duration())
                 }
             }
         }
@@ -185,9 +187,17 @@ impl<T: Lerp + Clone> Tween<T> {
         self.elapsed = self.elapsed.saturating_add(delta);
 
         if self.elapsed >= self.delay {
-            let elapsed = self.elapsed.saturating_sub(self.delay);
+            let elapsed = self.get_elapsed();
 
             self.value = self.origin.lerp(&self.target, self.curve.transform(elapsed as f32 / self.duration as f32));
+
+            if elapsed >= self.duration && matches!(self.repeat, RepeatMode::Infinite) {
+                if self.restart_behaviour.is_end_value() {
+                    std::mem::swap(&mut self.origin, &mut self.target);
+                }
+
+                self.elapsed = self.delay;
+            }
         }
     }
 }

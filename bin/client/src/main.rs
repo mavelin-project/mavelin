@@ -1169,7 +1169,7 @@ Rendered subchunks: {} / {total_subchunks}",
                 let new_container_origin =
                     container_origin + CHUNK_UI_CONTAINER_SIZE.with_x((CHUNK_UI_CONTAINER_SIZE.x - text.x) / 2.0) + Point2D::new(0.0, 2.0);
 
-                context.draw_rect(Rect::new(new_container_origin, Size2D::new(text.x + 4.0, 20.0)), Color::from_u32_rgb(0x1D211B));
+                context.draw_rect(Rect::new(new_container_origin, Size2D::new(text.x + 8.0, 20.0)), Color::from_u32_rgb(0x1D211B));
                 context.draw_text(
                     new_container_origin + Point2D::splat(4.0),
                     "default",
@@ -1193,7 +1193,7 @@ Rendered subchunks: {} / {total_subchunks}",
                 let new_container_origin =
                     container_origin + CHUNK_UI_CONTAINER_SIZE.with_x((CHUNK_UI_CONTAINER_SIZE.x - text.x) / 2.0) + Point2D::new(0.0, 24.0);
 
-                context.draw_rect(Rect::new(new_container_origin, Size2D::new(text.x + 4.0, 20.0)), Color::from_u32_rgb(0x1D211B));
+                context.draw_rect(Rect::new(new_container_origin, Size2D::new(text.x + 8.0, 20.0)), Color::from_u32_rgb(0x1D211B));
                 context.draw_text(
                     new_container_origin + Point2D::splat(4.0),
                     "default",
