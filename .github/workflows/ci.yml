@@ -12,7 +12,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Cache Linux audio packages
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
@@ -20,7 +20,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.1
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: rustfmt
@@ -28,52 +28,52 @@ jobs:
   dev-build-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Cache Linux audio packages
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
           packages: ${{ env.PACKAGES_LINUX }}
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.1
       - name: Install target
         run: rustup target add x86_64-unknown-linux-gnu
       - name: Build
         run: cargo build --release --bin meralus-client --target x86_64-unknown-linux-gnu
       - name: Compress
         run: mkdir tmp && cp -r resources tmp && cp target/x86_64-unknown-linux-gnu/release/meralus-client tmp
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: meralus-client-linux
           path: tmp/**/*
   dev-build-win:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.1
       - name: Install target
         run: rustup target add x86_64-pc-windows-msvc
       - name: Build
         run: cargo build --release --bin meralus-client --target x86_64-pc-windows-msvc
       - name: Compress
         run: mkdir tmp && cp -r resources tmp && cp target/x86_64-pc-windows-msvc/release/meralus-client.exe tmp
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: meralus-client-win
           path: tmp/**/*
   dev-build-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.1
       - name: Install target
         run: rustup target add x86_64-apple-darwin
       - name: Build
         run: cargo build --release --bin meralus-client --target x86_64-apple-darwin
       - name: Compress
         run: mkdir tmp && cp -r resources tmp && cp target/x86_64-apple-darwin/release/meralus-client tmp
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: meralus-client-macos
           path: tmp/**/*

@@ -21,7 +21,7 @@ impl Random {
     }
 
     pub const fn next_i32(&mut self, range: i32) -> i32 {
-        if (range & -range) == range {
+        if range.isolate_lowest_one() == range {
             return ((range as i64).wrapping_mul(self.next(31) as i64) >> 31) as i32;
         }
 
