@@ -75,7 +75,8 @@ impl RenderBackend {
 
     pub fn set_vsync(&self, enabled: bool) -> Result<(), Error> {
         if enabled {
-            self.surface.set_swap_interval(&self.context, glutin::surface::SwapInterval::Wait(unsafe { NonZeroU32::new_unchecked(1) }))?;
+            self.surface
+                .set_swap_interval(&self.context, glutin::surface::SwapInterval::Wait(unsafe { NonZeroU32::new_unchecked(1) }))?;
         } else {
             self.surface.set_swap_interval(&self.context, glutin::surface::SwapInterval::DontWait)?;
         }
