@@ -214,6 +214,20 @@ impl<T: State> ApplicationHandler for Application<T> {
                     window.state.handle_mouse_button(button, state.is_pressed());
                 });
             }
+            WindowEvent::RedrawRequested => self.window.inspect_mut(|window| {
+                window
+                    .state
+                    .update(WindowContext::new(event_loop, &window.window), &window.backend, window.delta);
+
+                window
+                    .state
+                    .render(WindowContext::new(event_loop, &window.window), &window.backend, window.delta);
+
+                window.delta = window.last_time.map_or_else(|| Duration::ZERO, |last_time| last_time.elapsed());
+                window.last_time.replace(Instant::now());
+
+                window.window.request_redraw();
+            }),
             WindowEvent::CloseRequested => event_loop.exit(),
             _ => {}
         }
@@ -225,20 +239,5 @@ impl<T: State> ApplicationHandler for Application<T> {
                 window.state.handle_mouse_motion(Some(Vector2D::new(delta.0 as f32, delta.1 as f32)), None);
             });
         }
-    }
-
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        self.window.inspect_mut(|window| {
-            window
-                .state
-                .update(WindowContext::new(event_loop, &window.window), &window.backend, window.delta);
-
-            window
-                .state
-                .render(WindowContext::new(event_loop, &window.window), &window.backend, window.delta);
-
-            window.delta = window.last_time.map_or_else(|| Duration::ZERO, |last_time| last_time.elapsed());
-            window.last_time.replace(Instant::now());
-        });
     }
 }

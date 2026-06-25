@@ -263,6 +263,7 @@ impl LightStyle {
 struct GraphicsSettings {
     light_style: LightStyle,
     render_distance: usize,
+    vsync: bool,
 }
 
 impl Default for GraphicsSettings {
@@ -270,6 +271,7 @@ impl Default for GraphicsSettings {
         Self {
             light_style: LightStyle::Smooth,
             render_distance: 12,
+            vsync: true,
         }
     }
 }
@@ -327,7 +329,7 @@ fn register_block<T: Block + 'static>(
 
 impl State for GameLoop {
     type Args = ();
-    
+
     const ICON: Option<&str> = Some("./resources/icon.png");
     const NAME: &str = "Meralus";
 
@@ -668,13 +670,20 @@ impl State for GameLoop {
             }
         }
 
-        if self.input.keyboard.modifiers.control_key
-            && self.input.keyboard.is_key_pressed_once(KeyCode::KeyS)
-            && let Some(world) = &mut self.world
-        {
-            info!("Saving world ({} chunks)", world.chunk_manager.len());
+        if self.input.keyboard.modifiers.control_key {
+            if self.input.keyboard.is_key_pressed_once(KeyCode::KeyS)
+                && let Some(world) = &mut self.world
+            {
+                info!("Saving world ({} chunks)", world.chunk_manager.len());
 
-            world.chunk_manager.save();
+                world.chunk_manager.save();
+            }
+
+            if self.input.keyboard.is_key_pressed_once(KeyCode::KeyV) {
+                backend.set_vsync(!self.settings.graphics.vsync).unwrap();
+
+                self.settings.graphics.vsync = !self.settings.graphics.vsync;
+            }
         }
 
         for (digit, i) in [

@@ -64,13 +64,23 @@ impl RenderBackend {
 
         let context = context.make_current(&surface)?;
 
-        surface.set_swap_interval(&context, glutin::surface::SwapInterval::DontWait)?;
+        surface.set_swap_interval(&context, glutin::surface::SwapInterval::Wait(unsafe { NonZeroU32::new_unchecked(1) }))?;
 
         Ok(Self {
             gl: Rc::new(unsafe { glow::Context::from_loader_function_cstr(|addr| display.get_proc_address(addr)) }),
             surface,
             context,
         })
+    }
+
+    pub fn set_vsync(&self, enabled: bool) -> Result<(), Error> {
+        if enabled {
+            self.surface.set_swap_interval(&self.context, glutin::surface::SwapInterval::Wait(unsafe { NonZeroU32::new_unchecked(1) }))?;
+        } else {
+            self.surface.set_swap_interval(&self.context, glutin::surface::SwapInterval::DontWait)?;
+        }
+
+        Ok(())
     }
 
     pub fn resize(&self, width: u32, height: u32) -> Result<(), Error> {
