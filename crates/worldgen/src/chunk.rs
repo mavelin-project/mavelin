@@ -50,7 +50,7 @@ impl ChunkGenerator {
         }
     }
 
-    pub fn generate_bare_terrain<T: BlockSource>(&self, chunk: &mut Chunk, block_source: &T, biome_cache: &BiomeNoise) {
+    pub fn generate_bare_terrain<T: BlockSource>(&self, chunk: &mut Chunk, _block_source: &T, biome_cache: &BiomeNoise) {
         let offset = IPoint3D::new(chunk.origin.x, 0, chunk.origin.y) * i32::from(B0);
         let terrain_noise = self.generate_terrain_noise(offset, IPoint3D::new(K.into(), B2.into(), L.into()), biome_cache);
 
@@ -116,7 +116,7 @@ impl ChunkGenerator {
         }
     }
 
-    pub fn generate_biome_terarain<T: BlockSource>(&self, chunk: &mut Chunk, random: &mut Random, block_source: &T, biome_cache: &BiomeNoise) {
+    pub fn generate_biome_terarain<T: BlockSource>(&self, chunk: &mut Chunk, random: &mut Random, _block_source: &T, biome_cache: &BiomeNoise) {
         let top_start_y: u8 = 64;
         let d0: f64 = 0.03125;
         let chunk_origin = chunk.origin.as_dvec2() * 16.0;

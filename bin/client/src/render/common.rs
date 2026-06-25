@@ -14,7 +14,7 @@ use lyon_tessellation::{
         builder::{BorderRadii, NoAttributes, Transformed},
     },
 };
-use meck::{TextureAtlas, TextureViewAtlas};
+use meck::TextureViewAtlas;
 use meralus_shared::{
     AsValue, Color, ConvertTo, IntConversionError, Point2D, Point3D, RRect, Rect, Size2D, Thickness, Transform3D, USize2D, Vector2D, Vector4D,
 };
@@ -452,7 +452,7 @@ impl CommonRenderer {
         // }
     }
 
-    pub fn measure<F: AsRef<str>, T: AsRef<str>>(&self, font: F, text: T, size: f32, max_width: Option<f32>) -> Option<Size2D> {
+    pub fn measure<F: AsRef<str>, T: AsRef<str>>(&self, font: F, text: T, size: f32, _max_width: Option<f32>) -> Option<Size2D> {
         self.font_name_map.get(font.as_ref()).copied().map(|font_index| {
             let text = text.as_ref();
 
@@ -460,7 +460,7 @@ impl CommonRenderer {
 
             let mut shape_context = ShapeContext::new();
             let mut shaper = shape_context.builder(font_ref).size(size).build();
-            let metrics = font_ref.glyph_metrics(&[]).scale(size);
+            let _metrics = font_ref.glyph_metrics(&[]).scale(size);
 
             shaper.add_str(text);
 
@@ -478,7 +478,7 @@ impl CommonRenderer {
                     y += size;
                 }
 
-                for glyph in cluster.glyphs {
+                for _glyph in cluster.glyphs {
                     x += cluster.advance();
                 }
             });
@@ -503,7 +503,7 @@ impl CommonRenderer {
         } else {
             let image = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
             let image = image.to_rgba8();
-            let (width, height) = image.dimensions();
+            let (_width, _height) = image.dimensions();
 
             let (offset, size, _) = self.atlas.append(key, &image);
 
@@ -679,7 +679,7 @@ impl CommonRenderer {
         } else {
             let image = image::ImageReader::open(image_path)?.with_guessed_format()?.decode()?;
             let image = image.to_rgba8();
-            let (width, height) = image.dimensions();
+            let (_width, _height) = image.dimensions();
 
             let (offset, size, _) = self.atlas.append(key, &image);
 
@@ -733,7 +733,7 @@ impl CommonRenderer {
         }
 
         let origin = min;
-        let size = (max - min);
+        let size = max - min;
 
         self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
         self.tessellator.set_uv_rect((offset, uv_size, origin, size));
@@ -850,7 +850,7 @@ impl CommonRenderer {
         text: T,
         color: Color,
         font_size: f32,
-        max_width: Option<f32>,
+        _max_width: Option<f32>,
     ) -> Result<(), IntConversionError> {
         use swash::{FontRef, scale::ScaleContext};
 
@@ -872,7 +872,7 @@ impl CommonRenderer {
             let mut scale_context = ScaleContext::new();
             let mut scaler = scale_context.builder(font_ref).hint(true).size(font_size).build();
             let mut shaper = shape_context.builder(font_ref).size(font_size).build();
-            let metrics = font_ref.glyph_metrics(&[]).scale(font_size);
+            let _metrics = font_ref.glyph_metrics(&[]).scale(font_size);
 
             shaper.add_str(text);
 
@@ -974,7 +974,7 @@ impl CommonRenderer {
     // }
 
     #[must_use = "RenderInfo itself needs to be extended into other"]
-    pub fn render(&mut self, pass: &mut RenderPass, backend: &RenderBackend, matrix: Option<Transform3D>, size: USize2D) -> Result<RenderInfo, Error> {
+    pub fn render(&mut self, pass: &mut RenderPass, _backend: &RenderBackend, matrix: Option<Transform3D>, size: USize2D) -> Result<RenderInfo, Error> {
         let matrix = matrix.or(self.matrix).unwrap_or(self.window_matrix);
 
         let vertices = self.buffers.vertices.len();

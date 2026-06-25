@@ -1,4 +1,4 @@
-use std::{borrow::Cow, mem::replace, sync::mpsc};
+use std::{mem::replace, sync::mpsc};
 
 use horns::Texture2d;
 use meralus_storage::ResourceStorage;
@@ -58,7 +58,7 @@ impl Progress {
                         info.current_stage_name.replace(name);
                         info.completed = 0;
 
-                        let previous_tasks = replace(&mut info.total, tasks);
+                        let _previous_tasks = replace(&mut info.total, tasks);
 
                         // animation.play_transition_to("stage-progress", info.current_stage as f32 /
                         // info.total_stages as f32);

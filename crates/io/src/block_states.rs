@@ -1,7 +1,7 @@
 use std::{collections::hash_map::Entry, fmt};
 
 use ahash::HashMap;
-use serde::{Deserialize, Serialize, de::DeserializeSeed};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct BlockStates {

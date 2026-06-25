@@ -108,7 +108,11 @@ impl<I: GlPrimitive> IndexBuffer<I> {
             );
 
             if ptr.is_null() {
-                eprintln!("[warn] map_buffer_range returned null (current-size = {}, data-size = {})", self.len * size_of::<I>(), data.len());
+                eprintln!(
+                    "[warn] map_buffer_range returned null (current-size = {}, data-size = {})",
+                    self.len * size_of::<I>(),
+                    data.len()
+                );
             } else {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
 

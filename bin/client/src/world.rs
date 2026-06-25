@@ -276,7 +276,7 @@ impl ChunkCache for ChunkFileCache {
     }
 
     fn get(&self, origin: IPoint2D) -> Option<Chunk> {
-        let path = self.root.join(format!("{}x{}.cdt", origin.x, origin.y));
+        let _path = self.root.join(format!("{}x{}.cdt", origin.x, origin.y));
 
         // if path.is_file() {
         //     let data = std::fs::read(path).ok()?;
@@ -287,7 +287,7 @@ impl ChunkCache for ChunkFileCache {
         // }
     }
 
-    fn insert(&mut self, origin: IPoint2D, chunk: &Chunk) {
+    fn insert(&mut self, _origin: IPoint2D, _chunk: &Chunk) {
         // let path = self.root.join(format!("{}x{}.cdt", origin.x, origin.y));
         // let data = chunk.serialize();
 

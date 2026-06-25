@@ -6,7 +6,7 @@ use lyon_tessellation::{FillBuilder, TessellationError, path::builder::NoAttribu
 use meralus_shared::{Color, Point2D, Point3D, RRect, Rect, Size2D, Thickness, Transform3D, USize2D, Vector2D};
 
 use crate::render::{
-    RawRenderBuffer, RenderBuffer,
+    RawRenderBuffer,
     common::{CommonRenderer, CommonVertex, ObjectFit, Path},
 };
 

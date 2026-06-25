@@ -229,7 +229,7 @@ impl PlayerController {
         let direction = get_movement_direction(input);
 
         if input.keyboard.is_key_pressed_once(KeyCode::KeyE) && !self.body.is_on_ground {
-            let (front, right, _) = get_rotation_directions(self.yaw, self.pitch);
+            let (front, _right, _) = get_rotation_directions(self.yaw, self.pitch);
 
             self.body.velocity += front * DASH_SPEED;
         }

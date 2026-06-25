@@ -68,7 +68,7 @@ impl Aabb {
     }
 
     pub fn size(&self) -> DSize3D {
-        (self.max - self.min)
+        self.max - self.min
     }
 
     #[must_use]

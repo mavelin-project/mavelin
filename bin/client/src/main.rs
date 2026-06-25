@@ -48,7 +48,7 @@ use crate::{
     progress::{Progress, ProgressInfo, ProgressSender},
     render::{
         chunk::{VoxelFace, VoxelMeshBuilder},
-        common::{CommonRenderer, CommonVertex},
+        common::CommonRenderer,
         context::{ArrangeStrategy, Arrangement, MeasureStrategy, RenderContext, RenderInfo, UiContext, UiSubcontext, WidgetState},
     },
     scenes::{Screen, loading_overlay::LoadingOverlay},
@@ -478,7 +478,7 @@ impl State for GameLoop {
         }
     }
 
-    fn handle_window_resize(&mut self, facade: &RenderBackend, size: USize2D, scale_factor: f64) {
+    fn handle_window_resize(&mut self, _facade: &RenderBackend, size: USize2D, scale_factor: f64) {
         // self.scene.resize(facade, size.to_array()).unwrap();
         // self.kawase.resize(facade, size.to_array()).unwrap();
 
@@ -582,7 +582,7 @@ impl State for GameLoop {
     }
 
     #[allow(clippy::too_many_lines, clippy::significant_drop_tightening)]
-    fn update(&mut self, context: WindowContext, backend: &RenderBackend, delta: Duration) {
+    fn update(&mut self, context: WindowContext, _backend: &RenderBackend, delta: Duration) {
         self.overlay.update(delta);
 
         if let Some(info) = &self.progress.info
@@ -819,7 +819,7 @@ impl State for GameLoop {
                             .map(|model| model.bounding_box)
                     })
             {
-                let white_pixel = self.common_renderer.white_pixel_uv();
+                let _white_pixel = self.common_renderer.white_pixel_uv();
 
                 model.min += result.position.as_dvec3();
                 model.max += result.position.as_dvec3();
@@ -1208,14 +1208,20 @@ Rendered vertices: {vertices}",
                     const ELEMENT_WIDTH: f32 = (SIZE.x - 100.0 * SPACING) / 100.0;
 
                     context.draw_rect(
-                        Rect::new(bounds.origin + bounds.size.with_x(4.0) - CONTAINER_SIZE.with_x(0.0) - Point2D::new(0.0, 4.0), CONTAINER_SIZE),
+                        Rect::new(
+                            bounds.origin + bounds.size.with_x(4.0) - CONTAINER_SIZE.with_x(0.0) - Point2D::new(0.0, 4.0),
+                            CONTAINER_SIZE,
+                        ),
                         Color::from_u32_rgb(0x1D211B),
                     );
 
                     let mut x = 0.0;
 
                     for stat in &self.settings.debugging.fps_stat {
-                        let size = Size2D::new(ELEMENT_WIDTH, CONTAINER_SIZE.y * (stat.as_secs_f32() / self.settings.debugging.fps_max.as_secs_f32()));
+                        let size = Size2D::new(
+                            ELEMENT_WIDTH,
+                            CONTAINER_SIZE.y * (stat.as_secs_f32() / self.settings.debugging.fps_max.as_secs_f32()),
+                        );
 
                         context.draw_rect(
                             Rect::new(bounds.origin + bounds.size.with_x(4.0 + x) - size.with_x(0.0) - Point2D::new(0.0, 4.0), size),

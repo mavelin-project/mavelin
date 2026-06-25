@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use meralus_shared::{Color, Point2D, Size2D, Vector2D};
+use meralus_shared::{Color, Point2D, Size2D};
 use meralus_tween::{Animation, Tween};
 
 use crate::{

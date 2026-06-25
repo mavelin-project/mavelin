@@ -110,7 +110,11 @@ impl<V: Vertex, S: Shader> VertexBuffer<V, S> {
                 .map_buffer_range(glow::ARRAY_BUFFER, 0, data.len() as i32, glow::MAP_WRITE_BIT | glow::MAP_INVALIDATE_BUFFER_BIT);
 
             if ptr.is_null() {
-                eprintln!("[warn] map_buffer_range returned null (current-size = {}, data-size = {})", self.len * size_of::<V>(), data.len());
+                eprintln!(
+                    "[warn] map_buffer_range returned null (current-size = {}, data-size = {})",
+                    self.len * size_of::<V>(),
+                    data.len()
+                );
             } else {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
 
