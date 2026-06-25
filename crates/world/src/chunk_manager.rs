@@ -105,27 +105,19 @@ impl LocalChunkManager {
 
 impl ChunkAccess for LocalChunkManager {
     fn get_chunk(&self, origin: IPoint2D) -> Option<&Arc<Chunk>> {
-        let delta = origin - self.origin;
+        let local_x = (origin.x - self.origin.x + 1) as usize;
+        let local_y = (origin.y - self.origin.y + 1) as usize;
+        let idx = local_x + local_y * 3;
 
-        if delta.x.abs() > 1 || delta.y.abs() > 1 {
-            return None;
-        }
-
-        let idx = ((delta.x + 1) + (delta.y + 1) * 3) as usize;
-
-        Some(&self.chunks[idx])
+        unsafe { Some(self.chunks.get_unchecked(idx)) }
     }
 
     fn get_chunk_mut(&mut self, origin: IPoint2D) -> Option<&mut Chunk> {
-        let delta = origin - self.origin;
+        let local_x = (origin.x - self.origin.x + 1) as usize;
+        let local_y = (origin.y - self.origin.y + 1) as usize;
+        let idx = local_x + local_y * 3;
 
-        if delta.x.abs() > 1 || delta.y.abs() > 1 {
-            return None;
-        }
-
-        let idx = ((delta.x + 1) + (delta.y + 1) * 3) as usize;
-
-        Some(Arc::make_mut(&mut self.chunks[idx]))
+        unsafe { Some(Arc::make_mut(self.chunks.get_unchecked_mut(idx))) }
     }
 
     fn get_block(&self, position: IPoint3D) -> Option<&SubChunkBlockState> {

@@ -45,6 +45,106 @@ const fn pack_rgba((r, g, b, a): (u8, u8, u8, u8)) -> u32 {
     (a as u32) << 24 | (r as u32) << 16 | (g as u32) << 8 | b as u32
 }
 
+pub struct TextureViewAtlas<K: Hash + Eq> {
+    texture_map: HashMap<K, (UVec2, UVec2, u8)>,
+    next_texture_offset: UVec2,
+    spacing: u32,
+    size: u32,
+}
+
+impl<K: Hash + Eq> TextureViewAtlas<K> {
+    pub fn new(size: u32) -> Self {
+        Self {
+            texture_map: HashMap::new(),
+            next_texture_offset: UVec2::ZERO,
+            spacing: 0,
+            size,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_spacing(mut self, spacing: u32) -> Self {
+        self.spacing = spacing;
+
+        self
+    }
+
+    pub fn size(&self) -> Vec2 {
+        UVec2::splat(self.size).as_vec2()
+    }
+
+    pub fn get_texture_rect<Q: ?Sized + Hash + Eq>(&self, key: &Q) -> Option<(UVec2, UVec2, u8)>
+    where
+        K: Borrow<Q>,
+    {
+        self.texture_map.get(key).copied()
+    }
+
+    pub fn get_texture_uv<Q: ?Sized + Hash + Eq>(&self, key: &Q) -> Option<(Vec2, Vec2, u8)>
+    where
+        K: Borrow<Q>,
+    {
+        let size = self.size();
+
+        self.get_texture_rect(key)
+            .map(|(origin, texture_size, alpha)| (origin.as_vec2() / size, texture_size.as_vec2() / size, alpha))
+    }
+
+    pub fn textures(&self) -> usize {
+        self.texture_map.len()
+    }
+
+    pub fn contains_texture<Q: ?Sized + Hash + Eq>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+    {
+        self.texture_map.contains_key(key)
+    }
+
+    pub fn step_next(&mut self, size: UVec2) {
+        self.next_texture_offset = self.next_texture_offset.with_x(self.next_texture_offset.x + size.x + self.spacing);
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the image is too large to be copied at the given
+    /// position.
+    pub fn special_append(&mut self, key: K, image: &RgbaImage) -> UVec2 {
+        if let Some((_, size, _)) = self.get_texture_rect(&key) {
+            return size;
+        }
+
+        let alpha = image.pixels().map(|pixel| pixel.0[3]).min().unwrap_or(0);
+        let size = UVec2::from(image.dimensions());
+        let offset = (self.next_texture_offset, size);
+
+        self.texture_map.insert(key, (offset.0, offset.1, alpha));
+        self.step_next(size);
+
+        size
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the image is too large to be copied at the given
+    /// position.
+    pub fn append(&mut self, key: K, image: &RgbaImage) -> (Vec2, Vec2, u8) {
+        if let Some(rect) = self.get_texture_uv(&key) {
+            return rect;
+        }
+
+        let alpha = image.pixels().map(|pixel| pixel.0[3]).min().unwrap_or(0);
+        let offset = (self.next_texture_offset, UVec2::from(image.dimensions()));
+
+        self.texture_map.insert(key, (offset.0, offset.1, alpha));
+        self.step_next(image.dimensions().into());
+
+        let size = self.size();
+
+        (offset.0.as_vec2() / size, offset.1.as_vec2() / size, alpha)
+    }
+}
+
 pub struct TextureAtlas<K: Hash + Eq> {
     texture_map: HashMap<K, (UVec2, UVec2, u8)>,
     next_texture_offset: UVec2,

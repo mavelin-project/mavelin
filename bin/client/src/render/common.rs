@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use ahash::{HashMap, HashMapExt};
-use horns::{Blend, BlendingFactor, DrawParams, ElementType, Error, Program, RenderBackend, RenderPass, Shader, Texture2d, VertexBuffer, impl_vertex};
+use horns::{
+    Blend, BlendingFactor, DrawParams, ElementType, Error, IndexBuffer, Program, RenderBackend, RenderPass, Shader, Texture2d, VertexBuffer, impl_vertex,
+};
 use image::ImageBuffer;
 use lyon_tessellation::{
     FillBuilder, FillGeometryBuilder, FillOptions, FillTessellator, FillVertex, GeometryBuilder, GeometryBuilderError, StrokeGeometryBuilder, StrokeVertex,
@@ -12,7 +14,7 @@ use lyon_tessellation::{
         builder::{BorderRadii, NoAttributes, Transformed},
     },
 };
-use meck::TextureAtlas;
+use meck::{TextureAtlas, TextureViewAtlas};
 use meralus_shared::{
     AsValue, Color, ConvertTo, IntConversionError, Point2D, Point3D, RRect, Rect, Size2D, Thickness, Transform3D, USize2D, Vector2D, Vector4D,
 };
@@ -110,9 +112,9 @@ impl GeometryBuilder for ShapeGeometryBuilder {
     }
 
     fn add_triangle(&mut self, a: VertexId, b: VertexId, c: VertexId) {
-        debug_assert!(a != b);
-        debug_assert!(a != c);
-        debug_assert!(b != c);
+        debug_assert_ne!(a, b);
+        debug_assert_ne!(a, c);
+        debug_assert_ne!(b, c);
         debug_assert!(a != VertexId::INVALID);
         debug_assert!(b != VertexId::INVALID);
         debug_assert!(c != VertexId::INVALID);
@@ -313,16 +315,16 @@ pub enum AtlasKey {
 
 #[allow(dead_code)]
 pub struct CommonRenderer {
-    pub(crate) shader: Program,
-
-    atlas: TextureAtlas<AtlasKey>,
-    pub texture: Texture2d,
+    shader: Program,
+    vbo: VertexBuffer<CommonVertex, ShapeShader>,
+    ibo: IndexBuffer<u32>,
+    texture: Texture2d,
+    atlas: TextureViewAtlas<AtlasKey>,
 
     // SHAPE RENDERING
-    pub tessellator: CommonTessellator,
+    tessellator: CommonTessellator,
 
     // TEXT RENDERING
-    // layout: Layout,
     font_name_map: HashMap<String, usize>,
 
     fonts: Vec<OwnedFont>,
@@ -341,16 +343,9 @@ pub struct CommonRenderer {
 
 pub struct OwnedFont {
     pub data: Vec<u8>,
-    // pub font: Font,
     pub offset: u32,
     pub key: CacheKey,
 }
-
-// impl Borrow<Font> for OwnedFont {
-//     fn borrow(&self) -> &Font {
-//         &self.font
-//     }
-// }
 
 const TEXT_BASE_VERTICES: [(Point3D, Point2D); 4] = [
     (Point3D::new(0.0, 1.0, 0.0), Point2D::new(0.0, 1.0)),
@@ -360,16 +355,15 @@ const TEXT_BASE_VERTICES: [(Point3D, Point2D); 4] = [
 ];
 
 impl CommonRenderer {
+    const PREALLOCATE_INDICES: usize = Self::PREALLOCATE_VERTICES * 2;
+    const PREALLOCATE_VERTICES: usize = 16 * 16 * 16 * 72;
+
     pub fn new(backend: &RenderBackend) -> Result<Self, Error> {
-        let mut atlas = TextureAtlas::new(4096).with_spacing(4);
+        let mut atlas = TextureViewAtlas::new(4096).with_spacing(4);
 
         let image = ImageBuffer::from_pixel(24, 24, image::Rgba([255, 255, 255, 255]));
 
         let (offset, size, _) = atlas.append(AtlasKey::WhitePixel, &image);
-        // #[cfg(not(feature = "image-rendering"))]
-        // let offset = Point2D::ZERO;
-        // #[cfg(not(feature = "image-rendering"))]
-        // let size = Point2D::splat(24.0) / 4096.0;
 
         let texture = backend.create_empty_texture2d(4096, 4096)?;
 
@@ -378,29 +372,30 @@ impl CommonRenderer {
             (offset.y * 4096.0) as u32,
             (size.x * 4096.0) as u32,
             (size.y * 4096.0) as u32,
-            &[255u8; 24 * 24 * 4]
-            // RawImage2d {
-            //     data: Cow::Owned(vec![255u8; 24 * 24 * 4]),
-            //     width: 24,
-            //     height: 24,
-            //     format: ClientFormat::U8U8U8U8,
-            // },
+            &[255u8; 24 * 24 * 4],
         );
 
         let shader = backend.create_program(&ShapeShader)?;
+        let vbo = backend.create_empty_vertex_buffer(Self::PREALLOCATE_VERTICES, &shader, true)?;
+        let ibo = backend.create_empty_index_buffer(ElementType::Triangles, Self::PREALLOCATE_INDICES, true)?;
+
+        println!("vbo + ibo created");
 
         Ok(Self {
+            shader,
+            vbo,
+            ibo,
+
             tessellator: CommonTessellator::new(offset + (size / 2.0)),
 
             atlas,
             texture,
 
-            // layout: Layout::new(CoordinateSystem::PositiveYDown),
             font_name_map: HashMap::new(),
-
             fonts: Vec::new(),
-            shader,
+
             buffers: RawRenderBuffer::new(),
+
             transform: None,
             window_matrix: Transform3D::IDENTITY,
             matrix: None,
@@ -591,7 +586,6 @@ impl CommonRenderer {
         } else {
             let image = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
             let image = image.to_rgba8();
-            let (width, height) = image.dimensions();
 
             let (offset, size, _) = self.atlas.append(key, &image);
 
@@ -600,12 +594,7 @@ impl CommonRenderer {
                 (offset.y * 4096.0).convert().unwrap(),
                 (size.x * 4096.0).convert().unwrap(),
                 (size.y * 4096.0).convert().unwrap(),
-                image.as_raw(), /* RawImage2d {
-                                 *     data: Cow::Owned(image.into_raw()),
-                                 *     width,
-                                 *     height,
-                                 *     format: ClientFormat::U8U8U8U8,
-                                 * }, */
+                image.as_raw(),
             );
 
             match object_fit {
@@ -872,11 +861,6 @@ impl CommonRenderer {
 
             let text = text.as_ref();
 
-            // self.layout.clear();
-            // self.layout.set_max_width(max_width);
-            // self.layout.append(&self.fonts, &TextStyle::new(text, font_size,
-            // font_index));
-
             let OwnedFont { data, offset, key, .. } = &self.fonts[font_index];
             let font_ref = FontRef {
                 data,
@@ -992,28 +976,20 @@ impl CommonRenderer {
     #[must_use = "RenderInfo itself needs to be extended into other"]
     pub fn render(&mut self, pass: &mut RenderPass, backend: &RenderBackend, matrix: Option<Transform3D>, size: USize2D) -> Result<RenderInfo, Error> {
         let matrix = matrix.or(self.matrix).unwrap_or(self.window_matrix);
-        let vertex_buffer: VertexBuffer<CommonVertex, ShapeShader> = backend.create_vertex_buffer(&self.buffers.vertices, &self.shader, false).unwrap();
-        let index_buffer = backend.create_index_buffer(ElementType::Triangles, &self.buffers.indices).unwrap();
+
+        let vertices = self.buffers.vertices.len();
+        let count = self.buffers.indices.len();
+
+        self.vbo.dynamic_write(&self.buffers.vertices);
+        self.ibo.dynamic_write(&self.buffers.indices);
 
         self.buffers.clear();
-
-        // let uniforms = uniform! {
-        //     atlas: self.texture
-        //         .sampled()
-        //         .minify_filter(MinifySamplerFilter::Nearest)
-        //         .magnify_filter(MagnifySamplerFilter::Nearest),
-        //     resolution:
-        // UPoint2D::from_tuple(surface.get_dimensions()).as_::<f32>().to_array(),
-        //     matrix: matrix.to_cols_array_2d(),
-        // };
 
         self.shader
             .bind()
             .with_uniform("atlas", &self.texture)
             .with_uniform("resolution", size.as_vec2().to_array())
             .with_uniform("matrix", matrix);
-
-        let vertices = vertex_buffer.len();
 
         pass.apply_params(DrawParams {
             blend: Some(Blend {
@@ -1024,40 +1000,9 @@ impl CommonRenderer {
             culling: None,
         });
 
-        pass.draw_elements(&vertex_buffer, &index_buffer);
+        pass.draw_elements_slice(&self.vbo, &self.ibo, count, 0);
         pass.reset_params();
-
-        // surface.draw(&vertex_buffer, &index_buffer, &self.shader, &uniforms,
-        // &DrawParameters {     blend: BLENDING,
-        //     ..DrawParameters::default()
-        // })?;
 
         Ok(RenderInfo { draw_calls: 1, vertices })
     }
 }
-
-// #[cfg(all(feature = "shape-rendering", feature = "polymorpher"))]
-// impl polymorpher::path::PathBuilder for Path {
-//     type Path = Self;
-
-//     fn move_to(&mut self, point: polymorpher::geometry::Point) {
-//         self.begin(bytemuck::cast(point));
-//     }
-
-//     fn line_to(&mut self, point: polymorpher::geometry::Point) {
-//         self.line_to(bytemuck::cast(point));
-//     }
-
-//     fn cubic_to(&mut self, ctrl1: polymorpher::geometry::Point, ctrl2:
-// polymorpher::geometry::Point, to: polymorpher::geometry::Point) {
-//         self.cubic_bezier_to(bytemuck::cast(ctrl1), bytemuck::cast(ctrl2),
-// bytemuck::cast(to));     }
-
-//     fn close(&mut self) {
-//         self.close();
-//     }
-
-//     fn build(self) -> Self::Path {
-//         self
-//     }
-// }

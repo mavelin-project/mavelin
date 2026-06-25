@@ -99,6 +99,16 @@ impl RenderBackend {
     }
 
     #[inline]
+    pub fn create_empty_vertex_buffer<V: Vertex, S: Shader>(&self, vertices: usize, shader: &Program, is_dynamic: bool) -> Result<VertexBuffer<V, S>, Error> {
+        VertexBuffer::empty(&self.gl, shader, vertices, is_dynamic)
+    }
+
+    #[inline]
+    pub fn create_empty_index_buffer<I: GlPrimitive>(&self, element_type: ElementType, indices: usize, is_dynamic: bool) -> Result<IndexBuffer<I>, Error> {
+        IndexBuffer::empty(&self.gl, element_type, indices, is_dynamic)
+    }
+
+    #[inline]
     pub fn create_program<T: Shader>(&self, source: &T) -> Result<Program, Error> {
         Program::new(&self.gl, source)
     }

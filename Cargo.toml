@@ -28,6 +28,10 @@ nursery = "warn"
 pedantic = "warn"
 must_use_candidate = { level = "allow", priority = 1 }
 
+[profile.profiling]
+inherits = "release"
+debug = true
+
 [profile.dev]
 opt-level = 1
 

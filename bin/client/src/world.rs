@@ -19,7 +19,6 @@ use meralus_world::{
 };
 use meralus_worldgen::ChunkGenerator;
 use tracing::info;
-use tracy_client::{set_thread_name, span};
 
 use crate::{
     AabbProvider, Camera, FIXED_FRAMERATE, GraphicsSettings, INVENTORY_HOTBAR_SLOTS, Interval, Item, LimitedAabbProvider, PlayerController, ResourceStorage,
@@ -344,9 +343,6 @@ impl JobManager {
         let sender = self.sender.clone();
 
         rayon::spawn(move || {
-            set_thread_name!("Generation");
-
-            let zone = span!("Generation");
             let instant = Instant::now();
             let generator = ChunkGenerator::new(i64::from(seed));
             let mut chunk = Chunk::new(origin);
@@ -354,8 +350,6 @@ impl JobManager {
             generator.generate_unpopulated_chunk_data(&mut chunk, resource_storage.as_ref());
 
             _ = sender.send(JobResult::Generation { chunk });
-
-            zone.emit_value(instant.elapsed().as_millis() as u64);
 
             info!(target: "client/world", origin = ?origin, "Chunk generated in {:?}", instant.elapsed());
         });
@@ -365,9 +359,6 @@ impl JobManager {
         let sender = self.sender.clone();
 
         rayon::spawn(move || {
-            set_thread_name!("Population");
-
-            let zone = span!("Population");
             let instant = Instant::now();
             let seed = i64::from(seed);
 
@@ -377,8 +368,6 @@ impl JobManager {
 
             _ = sender.send(JobResult::Population { chunk, neighbours });
 
-            zone.emit_value(instant.elapsed().as_millis() as u64);
-
             info!(target: "client/world", origin = ?origin, "Chunk populated in {:?}", instant.elapsed());
         });
     }
@@ -387,9 +376,6 @@ impl JobManager {
         let sender = self.sender.clone();
 
         rayon::spawn(move || {
-            set_thread_name!("Lighting");
-
-            let zone = span!("Lighting");
             let instant = Instant::now();
             let mut bfs_light = BfsLight::new(&mut chunk_manager);
 
@@ -417,8 +403,6 @@ impl JobManager {
 
             _ = sender.send(JobResult::Lightning { chunk, neighbours });
 
-            zone.emit_value(instant.elapsed().as_millis() as u64);
-
             info!(target: "client/world", origin = ?origin, "Chunk lighted in {:?}", instant.elapsed());
         });
     }
@@ -427,10 +411,6 @@ impl JobManager {
         let sender = self.sender.clone();
 
         rayon::spawn(move || {
-            set_thread_name!("Meshing");
-
-            let zone = span!("Meshing");
-
             let instant = Instant::now();
             let snapshot = WorldSnapshot::new(&chunk_manager, resource_storage, settings);
             let mesh = (0..SUBCHUNK_COUNT)
@@ -449,8 +429,6 @@ impl JobManager {
                 .collect();
 
             _ = sender.send(JobResult::Meshing { origin, mesh });
-
-            zone.emit_value(instant.elapsed().as_millis() as u64);
 
             info!(target: "client/world", origin = ?origin, "Chunk meshed in {:?}", instant.elapsed());
         });

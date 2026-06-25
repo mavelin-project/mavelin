@@ -19,6 +19,7 @@ mod util;
 mod world;
 
 use std::{
+    collections::VecDeque,
     f32,
     path::PathBuf,
     sync::{Arc, mpsc},
@@ -35,7 +36,6 @@ use meralus_storage::{Block, ResourceStorage, TextureStorage};
 use meralus_tween::{Animation, Tween};
 use meralus_world::{BfsLight, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, SubChunkBlockState};
 use tracing::info;
-use tracy_client::{set_thread_name, span};
 
 use crate::{
     blocks::{
@@ -87,32 +87,19 @@ pub(crate) fn get_sky_color((after_day, progress): (bool, f32), weather: f32) ->
 const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.4, 0.75);
 
 #[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone)]
 struct Debugging {
-    time_paused: bool,
-    overlay: bool,
-    wireframe: bool,
-    draw_borders: bool,
-    inventory_open: bool,
-    chunk_borders: Vec<CommonVertex>,
-    render_info: RenderInfo,
-    item_rotation_x: f32,
-    item_rotation_y: f32,
-    item_rotation_z: f32,
+    enabled: bool,
+    fps_stat: VecDeque<Duration>,
+    fps_max: Duration,
 }
 
 impl Default for Debugging {
     fn default() -> Self {
         Self {
-            time_paused: true,
-            overlay: false,
-            wireframe: false,
-            draw_borders: false,
-            inventory_open: false,
-            chunk_borders: Vec::new(),
-            render_info: RenderInfo::default(),
-            item_rotation_x: 200f32.to_radians(),
-            item_rotation_y: 35f32.to_radians(),
-            item_rotation_z: 0.0,
+            enabled: false,
+            fps_stat: VecDeque::new(),
+            fps_max: Duration::ZERO,
         }
     }
 }
@@ -286,15 +273,17 @@ impl Default for GraphicsSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Settings {
     graphics: GraphicsSettings,
+    debugging: Debugging,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             graphics: GraphicsSettings::default(),
+            debugging: Debugging::default(),
         }
     }
 }
@@ -354,8 +343,6 @@ impl State for GameLoop {
         let resource_manager = Arc::new(ResourceStorage::new("./resources"));
 
         std::thread::spawn(move || {
-            set_thread_name!("Resources Loading");
-
             let mut resources = ResourceStorage::new("./resources");
 
             let sender = ProgressSender(tx);
@@ -370,55 +357,28 @@ impl State for GameLoop {
 
             sender.new_stage("Blocks loading", 20)?;
 
-            let zone = span!("Models Loading");
-
             resources.load_entity_model("game", "player");
-
-            zone.emit_text("Registered entities:game/player");
-
             resources.load_entity_model("game", "floating");
 
-            zone.emit_text("Registered entities:game/player");
-
             register_block(&mut resources, &sender, AirBlock)?;
-            zone.emit_text("Registered blocks:game/air");
             register_block(&mut resources, &sender, StoneBlock)?;
-            zone.emit_text("Registered blocks:game/stone");
             register_block(&mut resources, &sender, WaterBlock)?;
-            zone.emit_text("Registered blocks:game/water");
             register_block(&mut resources, &sender, DirtBlock)?;
-            zone.emit_text("Registered blocks:game/dirt");
             register_block(&mut resources, &sender, GrassBlock)?;
-            zone.emit_text("Registered blocks:game/grass");
             register_block(&mut resources, &sender, WoodBlock)?;
-            zone.emit_text("Registered blocks:game/wood");
             register_block(&mut resources, &sender, SandBlock)?;
-            zone.emit_text("Registered blocks:game/sand");
             register_block(&mut resources, &sender, OakLeavesBlock)?;
-            zone.emit_text("Registered blocks:game/oak_leaves");
             register_block(&mut resources, &sender, OakLogBlock)?;
-            zone.emit_text("Registered blocks:game/oak_log");
             register_block(&mut resources, &sender, IceBlock)?;
-            zone.emit_text("Registered blocks:game/ice");
             register_block(&mut resources, &sender, GreenGlassBlock)?;
-            zone.emit_text("Registered blocks:game/green_glass");
             register_block(&mut resources, &sender, TorchBlock)?;
-            zone.emit_text("Registered blocks:game/torch");
             register_block(&mut resources, &sender, SnowBlock)?;
-            zone.emit_text("Registered blocks:game/snow");
             register_block(&mut resources, &sender, RoseBlock)?;
-            zone.emit_text("Registered blocks:game/rose");
             register_block(&mut resources, &sender, BlueRoseBlock)?;
-            zone.emit_text("Registered blocks:game/blue_rose");
             register_block(&mut resources, &sender, CobbleStoneBlock)?;
-            zone.emit_text("Registered blocks:game/cobblestone");
             register_block(&mut resources, &sender, BricksBlock)?;
-            zone.emit_text("Registered blocks:game/bricks");
             register_block(&mut resources, &sender, StoneBricksBlock)?;
-            zone.emit_text("Registered blocks:game/stone_bricks");
             register_block(&mut resources, &sender, DebugBlock)?;
-            zone.emit_text("Registered blocks:game/debug");
-
             #[cfg(feature = "addons")]
             {
                 sender.new_stage("Loading addons", 1);
@@ -433,14 +393,10 @@ impl State for GameLoop {
 
             sender.new_stage("Mip-maps generation", 4)?;
 
-            let zone = span!("Mip-maps generation");
-
             for level in 1..=4 {
                 resources.generate_mipmap(level);
 
                 sender.complete_task()?;
-
-                zone.emit_text("Generated mip-map");
             }
 
             _ = action_sender.send(Action::ReplaceResourceManager(resources));
@@ -629,11 +585,10 @@ impl State for GameLoop {
     fn update(&mut self, context: WindowContext, backend: &RenderBackend, delta: Duration) {
         self.overlay.update(delta);
 
-        if let Some(info) = &self.progress.info {
-            if self.overlay.progress.is_finished() {
-                // self.overlay.progress.();
-                self.overlay.progress.set(info.completed as f32 / info.total as f32);
-            }
+        if let Some(info) = &self.progress.info
+            && self.overlay.progress.is_finished()
+        {
+            self.overlay.progress.set(info.completed as f32 / info.total as f32);
         }
 
         self.progress.update(&self.texture_atlas, &self.lightmap_atlas, &self.resource_manager);
@@ -642,14 +597,6 @@ impl State for GameLoop {
             if world.player_controllable {
                 for _ in 0..self.fixed_interval.update(delta) {
                     world.physics_step(&self.input);
-
-                    let provider = AabbProvider {
-                        chunk_manager: &world.chunk_manager,
-                        entity_manager: &world.entities,
-                        storage: world.resource_storage.as_ref(),
-                    };
-
-                    let context = PhysicsContext::new(provider);
 
                     // self.particles.physics_update(&context, FIXED_FRAMERATE.as_secs_f32());
 
@@ -675,6 +622,12 @@ impl State for GameLoop {
 
         if self.input.keyboard.is_key_pressed_once(KeyCode::KeyL) {
             self.resource_manager.debug_save();
+        }
+
+        if self.input.keyboard.is_key_pressed_once(KeyCode::F3) {
+            self.settings.debugging.enabled = !self.settings.debugging.enabled;
+
+            println!("{}", self.settings.debugging.enabled);
         }
 
         if self.input.keyboard.is_key_pressed_once(KeyCode::Tab) {
@@ -763,6 +716,13 @@ impl State for GameLoop {
 
     #[allow(clippy::too_many_lines)]
     fn render(&mut self, window_context: WindowContext, backend: &RenderBackend, delta: Duration) {
+        if self.settings.debugging.fps_stat.len() >= 100 {
+            self.settings.debugging.fps_stat.pop_front();
+        }
+
+        self.settings.debugging.fps_stat.push_back(delta);
+        self.settings.debugging.fps_max = self.settings.debugging.fps_max.max(delta);
+
         let RenderInfo { draw_calls, vertices } = RenderInfo::default();
 
         let (width, height) = window_context.window_size().into();
@@ -1239,6 +1199,42 @@ Rendered vertices: {vertices}",
                     },
                 );
             });
+
+            if self.settings.debugging.enabled {
+                context.ui(|context, bounds| {
+                    const SPACING: f32 = 1.0;
+                    const SIZE: Size2D = Size2D::new(100.0 * (2.0 + SPACING), 96.0);
+                    const CONTAINER_SIZE: Size2D = Size2D::new(SIZE.x - SPACING, SIZE.y);
+                    const ELEMENT_WIDTH: f32 = (SIZE.x - 100.0 * SPACING) / 100.0;
+
+                    context.draw_rect(
+                        Rect::new(bounds.origin + bounds.size.with_x(4.0) - CONTAINER_SIZE.with_x(0.0) - Point2D::new(0.0, 4.0), CONTAINER_SIZE),
+                        Color::from_u32_rgb(0x1D211B),
+                    );
+
+                    let mut x = 0.0;
+
+                    for stat in &self.settings.debugging.fps_stat {
+                        let size = Size2D::new(ELEMENT_WIDTH, CONTAINER_SIZE.y * (stat.as_secs_f32() / self.settings.debugging.fps_max.as_secs_f32()));
+
+                        context.draw_rect(
+                            Rect::new(bounds.origin + bounds.size.with_x(4.0 + x) - size.with_x(0.0) - Point2D::new(0.0, 4.0), size),
+                            Color::from_hsl(110.0, 0.4, 0.7),
+                        );
+
+                        x += ELEMENT_WIDTH + SPACING;
+                    }
+
+                    context.draw_text(
+                        bounds.origin + bounds.size.with_x(8.0) - CONTAINER_SIZE.with_x(0.0) - Point2D::new(0.0, 4.0),
+                        "default",
+                        format!("fps: {:.0} ({:.2}ms)", 1.0 / delta.as_secs_f32(), delta.as_secs_f32() * 1000.0),
+                        9.0,
+                        Color::from_hsl(110.0, 0.5, 0.8),
+                        None,
+                    );
+                });
+            }
 
             context.finish(backend, &mut frame, window_context.window_size());
         } else {
@@ -1911,9 +1907,6 @@ async fn main() {
         ),
     ));
 
-    tracy_client::register_demangler!();
-    tracy_client::Client::start();
-
     Application::<GameLoop>::new(()).start().expect("failed to run app");
 }
 
@@ -1926,9 +1919,6 @@ fn main() {
             tracing_subscriber::filter::filter_fn(|metadata| !(metadata.target() == "cranelift_jit::backend" && metadata.level() == &tracing::Level::INFO)),
         ),
     ));
-
-    tracy_client::register_demangler!();
-    // tracy_client::Client::start();
 
     Application::<GameLoop>::new(()).start().expect("failed to run app");
 }
