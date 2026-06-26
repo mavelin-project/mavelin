@@ -10,6 +10,7 @@ pub struct RenderBuffer<V: Vertex, S: Shader, I: GlPrimitive> {
 }
 
 impl<V: Vertex, S: Shader, I: GlPrimitive> RenderBuffer<V, S, I> {
+    #[inline]
     pub fn new(backend: &RenderBackend, vertices: &[V], shader: &Program, element_type: ElementType, indices: &[I]) -> Result<Self, Error> {
         Ok(Self {
             vertices: backend.create_vertex_buffer(vertices, shader, false)?,
@@ -23,7 +24,9 @@ pub struct RawRenderBuffer<V: Vertex, I: GlPrimitive> {
     pub indices: Vec<I>,
 }
 
+#[allow(dead_code)]
 impl<V: Vertex, I: GlPrimitive> RawRenderBuffer<V, I> {
+    #[inline]
     pub const fn new() -> Self {
         Self {
             vertices: Vec::new(),
@@ -31,6 +34,7 @@ impl<V: Vertex, I: GlPrimitive> RawRenderBuffer<V, I> {
         }
     }
 
+    #[inline]
     pub fn with_capacity(vertices: usize, indices: usize) -> Self {
         Self {
             vertices: Vec::with_capacity(vertices),
@@ -38,6 +42,7 @@ impl<V: Vertex, I: GlPrimitive> RawRenderBuffer<V, I> {
         }
     }
 
+    #[inline]
     pub fn clear(&mut self) {
         self.vertices.clear();
         self.indices.clear();
@@ -45,6 +50,7 @@ impl<V: Vertex, I: GlPrimitive> RawRenderBuffer<V, I> {
 }
 
 impl<V: Vertex, I: GlPrimitive> Default for RawRenderBuffer<V, I> {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }

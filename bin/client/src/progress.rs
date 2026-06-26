@@ -21,6 +21,7 @@ pub struct ProgressInfo {
 }
 
 impl ProgressInfo {
+    #[inline]
     pub const fn new(total_stages: usize, current_stage: usize, total: usize, completed: usize) -> Self {
         Self {
             total_stages,
@@ -39,6 +40,7 @@ pub struct Progress {
 }
 
 impl Progress {
+    #[inline]
     pub const fn new(receiver: mpsc::Receiver<ProgressChange>) -> Self {
         Self {
             receiver,
@@ -120,18 +122,22 @@ impl Progress {
 pub struct ProgressSender(pub mpsc::Sender<ProgressChange>);
 
 impl ProgressSender {
+    #[inline]
     pub fn set_initial_info(&self, info: ProgressInfo) -> Result<(), mpsc::SendError<ProgressChange>> {
         self.0.send(ProgressChange::SetInitialInfo(info))
     }
 
+    #[inline]
     pub fn new_stage<T: Into<String>>(&self, name: T, tasks: usize) -> Result<(), mpsc::SendError<ProgressChange>> {
         self.0.send(ProgressChange::NewStage(name.into(), tasks))
     }
 
+    #[inline]
     pub fn complete_task(&self) -> Result<(), mpsc::SendError<ProgressChange>> {
         self.0.send(ProgressChange::TaskCompleted)
     }
 
+    #[inline]
     pub fn set_visible(&self, visible: bool) -> Result<(), mpsc::SendError<ProgressChange>> {
         self.0.send(ProgressChange::SetVisible(visible))
     }

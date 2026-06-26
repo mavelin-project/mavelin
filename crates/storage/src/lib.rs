@@ -199,15 +199,15 @@ impl ResourceStorage {
 
 #[allow(clippy::cast_possible_truncation)]
 impl BlockSource for ResourceStorage {
-    fn get_block_id(&self, name: &str) -> u8 {
-        self.blocks.get_by_name(name) as u8
+    fn get_block_id(&self, name: &str) -> u32 {
+        self.blocks.get_by_name(name)
     }
 
-    fn blocks_light(&self, block: &str) -> bool {
-        unsafe { self.blocks.get(self.blocks.get_by_name(block)).unwrap_unchecked() }.blocks_light()
+    fn blocks_light(&self, id: u32) -> bool {
+        unsafe { self.blocks.get(id).unwrap_unchecked() }.blocks_light()
     }
 
-    fn light_consumption(&self, block: &str) -> u8 {
-        unsafe { self.blocks.get(self.blocks.get_by_name(block)).unwrap_unchecked() }.consume_light_level()
+    fn light_consumption(&self, id: u32) -> u8 {
+        unsafe { self.blocks.get(id).unwrap_unchecked() }.consume_light_level()
     }
 }

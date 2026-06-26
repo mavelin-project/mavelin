@@ -26,47 +26,60 @@ pub const CHUNK_HEIGHT_F32: f32 = SUBCHUNK_SIZE_F32 * SUBCHUNK_COUNT_F32;
 pub const CHUNK_HEIGHT_F64: f64 = SUBCHUNK_SIZE_F64 * SUBCHUNK_COUNT_F64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// Cube whose size is specified by [`CHUNK_SIZE`] constant.
 pub struct SubChunkBlockState {
-    /// 3D array of block IDs.
-    pub name: String,
+    pub id: u32,
     pub properties: HashMap<String, PropertyValue>,
 }
 
 impl SubChunkBlockState {
-    pub fn new<T: Into<String>>(name: T) -> Self {
-        let name = name.into();
-
+    #[inline]
+    pub fn new(id: u32) -> Self {
         Self {
-            name,
+            id,
             properties: HashMap::default(),
         }
     }
 
+    #[inline]
+    pub fn air() -> Self {
+        Self::new(0)
+    }
+
+    #[inline]
+    pub const fn is_air(&self) -> bool {
+        self.id == 0
+    }
+
+    #[inline]
     pub fn set_i64(&mut self, property: &str, value: i64) {
         self.properties.insert(property.to_string(), PropertyValue::Number(value));
     }
 
+    #[inline]
     pub fn set_f32(&mut self, property: &str, value: f32) {
         self.properties.insert(property.to_string(), PropertyValue::Float(value));
     }
 
+    #[inline]
     pub fn set_bool(&mut self, property: &str, value: bool) {
         self.properties.insert(property.to_string(), PropertyValue::Boolean(value));
     }
 
+    #[inline]
     pub fn get_i64(&self, property: &str) -> Option<i64> {
         self.properties
             .get(property)
             .and_then(|value| if let &PropertyValue::Number(value) = value { Some(value) } else { None })
     }
 
+    #[inline]
     pub fn get_f32(&self, property: &str) -> Option<f32> {
         self.properties
             .get(property)
             .and_then(|value| if let &PropertyValue::Float(value) = value { Some(value) } else { None })
     }
 
+    #[inline]
     pub fn get_bool(&self, property: &str) -> Option<bool> {
         self.properties
             .get(property)
@@ -86,9 +99,10 @@ pub struct SubChunk {
 }
 
 impl SubChunk {
+    #[inline]
     pub fn empty() -> Self {
         Self {
-            palette: vec![SubChunkBlockState::new("game:air")],
+            palette: vec![SubChunkBlockState::air()],
             data: [0; SUBCHUNK_SIZE * SUBCHUNK_SIZE * SUBCHUNK_SIZE],
             light_levels: [0; SUBCHUNK_SIZE * SUBCHUNK_SIZE * SUBCHUNK_SIZE],
         }
@@ -104,10 +118,12 @@ impl SubChunk {
         new_boxed_array(repeat_n(Self::empty(), SUBCHUNK_COUNT).collect())
     }
 
-    pub fn index_of_state(&self, name: &str) -> usize {
-        self.palette.iter().position(|palette_block| palette_block.name == name).unwrap_or(0)
+    #[inline]
+    pub fn index_of_state(&self, id: u32) -> usize {
+        self.palette.iter().position(|palette_block| palette_block.id == id).unwrap_or(0)
     }
 
+    #[inline]
     pub fn try_insert(&mut self, block: SubChunkBlockState) -> usize {
         if let Some(index) = self.palette.iter().position(|palette_block| palette_block == &block) {
             index
@@ -152,6 +168,7 @@ pub struct Chunk {
 }
 
 impl Chunk {
+    #[inline]
     pub fn empty() -> Self {
         Self {
             origin: IPoint2D::ZERO,
@@ -162,12 +179,14 @@ impl Chunk {
     }
 
     #[must_use]
+    #[inline]
     pub const fn with_origin(mut self, origin: IPoint2D) -> Self {
         self.origin = origin;
 
         self
     }
 
+    #[inline]
     pub const fn index_of_biome(position: USizePoint2D) -> usize {
         position.y * SUBCHUNK_SIZE + position.x
     }
@@ -210,6 +229,7 @@ impl Chunk {
     //     Ok(chunk)
     // }
 
+    #[inline]
     pub const fn corner(position: USizePoint3D) -> Option<[IPoint2D; 3]> {
         match (position.x, position.z) {
             (0, 0) => Some([IPoint2D::NEG_X, IPoint2D::NEG_Y, IPoint2D::NEG_ONE]),
@@ -220,6 +240,7 @@ impl Chunk {
         }
     }
 
+    #[inline]
     pub const fn side(position: USizePoint3D) -> Option<IPoint2D> {
         if position.x == 0 {
             Some(IPoint2D::NEG_X)
@@ -330,6 +351,7 @@ impl Chunk {
         self.origin.x == (position.x >> 4) && self.origin.y == (position.z >> 4) && (0..SUBCHUNK_COUNT_I32).contains(&(position.y >> 4))
     }
 
+    #[inline]
     pub fn set_block(&mut self, position: USizePoint3D, block: SubChunkBlockState) {
         if self.contains_local_position(position) {
             self.set_block_unchecked(position, block);
@@ -348,6 +370,7 @@ impl Chunk {
         }
     }
 
+    #[inline]
     pub fn get_block(&self, position: USizePoint3D) -> Option<&SubChunkBlockState> {
         if self.contains_local_position(position) {
             Some(self.get_block_unchecked(position))
@@ -419,6 +442,11 @@ impl Chunk {
     }
 
     #[inline]
+    pub fn get_light_level_by_idx_mut(&mut self, subchunk: usize, index: usize) -> &mut u8 {
+        unsafe { self.subchunks.get_unchecked_mut(subchunk).light_levels.get_unchecked_mut(index) }
+    }
+
+    #[inline]
     pub const fn get_light_level_mut(&mut self, position: USizePoint3D) -> &mut u8 {
         let [subchunk, y] = Self::get_subchunk_index(position.y);
 
@@ -429,7 +457,7 @@ impl Chunk {
     pub fn check_for_local_block(&self, local_position: USizePoint3D) -> bool {
         let [subchunk, y] = Self::get_subchunk_index(local_position.y);
 
-        self.subchunks[subchunk].palette[self.subchunks[subchunk].data[SubChunk::index_of(USizePoint3D { y, ..local_position })] as usize].name != "game:air"
+        !self.subchunks[subchunk].palette[self.subchunks[subchunk].data[SubChunk::index_of(USizePoint3D { y, ..local_position })] as usize].is_air()
     }
 
     #[inline]
@@ -437,6 +465,7 @@ impl Chunk {
         self.contains_position(position) && self.check_for_local_block(Self::to_local(position))
     }
 
+    #[inline]
     pub const fn get_light(&self, position: USizePoint3D, is_sky_light: bool) -> u8 {
         if is_sky_light {
             self.get_sky_light(position)
@@ -445,6 +474,7 @@ impl Chunk {
         }
     }
 
+    #[inline]
     pub const fn set_light(&mut self, position: USizePoint3D, is_sky_light: bool, value: u8) {
         if is_sky_light {
             self.set_sky_light(position, value);
@@ -479,6 +509,13 @@ impl Chunk {
     }
 
     #[inline]
+    pub fn set_sky_light_by_idx(&mut self, subchunk: usize, index: usize, value: u8) {
+        let level = self.get_light_level_by_idx_mut(subchunk, index);
+
+        *level = (*level & 0xF) | (value << 4);
+    }
+
+    #[inline]
     pub const fn set_sky_light(&mut self, position: USizePoint3D, value: u8) {
         let level = self.get_light_level_mut(position);
 
@@ -493,6 +530,13 @@ impl Chunk {
     #[inline]
     pub fn get_block_light_unchecked(&self, position: USizePoint3D) -> u8 {
         self.get_light_level_unchecked(position) & 0xF
+    }
+
+    #[inline]
+    pub fn set_block_light_by_idx(&mut self, subchunk: usize, index: usize, value: u8) {
+        let level = self.get_light_level_by_idx_mut(subchunk, index);
+
+        *level = (*level & 0xF0) | value;
     }
 
     #[inline]
@@ -522,6 +566,7 @@ impl<'a> IntoIterator for &'a Chunk {
     type IntoIter = ChunkIter<'a>;
     type Item = (USizePoint3D, &'a SubChunkBlockState);
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         ChunkIter::new(self)
     }
@@ -537,6 +582,7 @@ pub struct ChunkFaceIter<'a> {
 }
 
 impl<'a> ChunkFaceIter<'a> {
+    #[inline]
     pub const fn new(chunk: &'a Chunk, face: Face) -> Self {
         let min = match face {
             Face::Right => USizePoint3D::new(SUBCHUNK_XZ_MAX, 0, 0),
@@ -566,6 +612,7 @@ impl<'a> ChunkFaceIter<'a> {
 impl<'a> Iterator for ChunkFaceIter<'a> {
     type Item = (USizePoint3D, &'a SubChunkBlockState);
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.y == self.max.y {
             None
@@ -602,6 +649,7 @@ pub struct ChunkIter<'a> {
 }
 
 impl<'a> ChunkIter<'a> {
+    #[inline]
     pub const fn new(chunk: &'a Chunk) -> Self {
         Self { chunk, y: 0, z: 0, x: 0 }
     }
@@ -610,6 +658,7 @@ impl<'a> ChunkIter<'a> {
 impl<'a> Iterator for ChunkIter<'a> {
     type Item = (USizePoint3D, &'a SubChunkBlockState);
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.y == CHUNK_HEIGHT {
             None
@@ -702,6 +751,6 @@ impl<'a> Iterator for SubChunkIter<'a> {
 
         let chunk_local_position = USizePoint3D::new(local_x, self.world_y_offset + local_y, local_z);
 
-        Some((chunk_local_position, if block_state.name == "game:air" { None } else { Some(block_state) }))
+        Some((chunk_local_position, if block_state.is_air() { None } else { Some(block_state) }))
     }
 }

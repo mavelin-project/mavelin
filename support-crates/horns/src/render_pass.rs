@@ -93,6 +93,7 @@ pub struct DrawParams {
 }
 
 impl RenderPass {
+    #[inline]
     pub fn clear_color_and_depth(&self, color: [f32; 4], depth: f32) {
         unsafe {
             self.gl.clear_depth(f64::from(depth));
@@ -103,6 +104,7 @@ impl RenderPass {
         }
     }
 
+    #[inline]
     pub fn clear_depth(&self, depth: f32) {
         unsafe {
             self.gl.clear_depth(f64::from(depth));
@@ -294,6 +296,7 @@ impl RenderPass {
 }
 
 impl Drop for RenderPass {
+    #[inline]
     fn drop(&mut self) {
         assert!(self.finished, "RenderPass was dropped without `RenderPass::finish` being called");
     }

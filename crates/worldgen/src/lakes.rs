@@ -1,14 +1,17 @@
 use meralus_shared::{IPoint3D, Random};
 use meralus_world::{ChunkAccess, SubChunkBlockState};
 
-pub struct LakesGenerator;
+pub struct LakesGenerator {
+    pub(crate) air: u32,
+    pub(crate) water: u32,
+}
 
 impl LakesGenerator {
     pub fn populate<C: ChunkAccess>(&self, chunk_manager: &mut C, random: &mut Random, mut center: IPoint3D) -> bool {
         center.x -= 8;
         center.z -= 8;
 
-        while center.y > 0 && chunk_manager.get_block(center).is_none_or(|b| b.name == "game:air") {
+        while center.y > 0 && chunk_manager.get_block(center).is_none_or(|b| b.id == self.air) {
             center.y -= 1;
         }
 
@@ -54,11 +57,11 @@ impl LakesGenerator {
                     {
                         let material = chunk_manager.get_block(center + IPoint3D::new(x as i32, y as i32, z as i32));
 
-                        if y >= 4 && material.is_some_and(|material| material.name == "game:water") {
+                        if y >= 4 && material.is_some_and(|material| material.id == self.water) {
                             return false;
                         }
 
-                        if y < 4 && material.is_none_or(|b| b.name == "game:air")
+                        if y < 4 && material.is_none_or(|b| b.id == self.air)
                         // || material == self.primary_block) && chunk.get_block_uncehced(center.x + i1, center.y + j2, center.z + i2) != this.a.getMaterial())
                         {
                             return false;
@@ -75,9 +78,9 @@ impl LakesGenerator {
                         chunk_manager.set_block(
                             center + IPoint3D::new(x as i32, y as i32, z as i32),
                             if y >= 4 {
-                                SubChunkBlockState::new("game:air")
+                                SubChunkBlockState::new(self.air)
                             } else {
-                                SubChunkBlockState::new("game:water")
+                                SubChunkBlockState::new(self.water)
                             },
                         );
                     }

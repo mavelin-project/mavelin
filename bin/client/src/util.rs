@@ -1,11 +1,11 @@
-use meralus_physics::Aabb;
-use meralus_shared::{AsValue, Color, Cube3D, Face, Point2D, Point3D, Vector3D, Vector4D};
+use meralus_shared::{Color, Face, Point3D, Vector3D};
 
-use crate::{input::Input, render::common::CommonVertex};
+use crate::input::Input;
 
 const AMBIENT_OCCLUSION_VALUES: [f32; 4] = [0.55, 0.65, 0.8, 1.0];
 
 #[must_use]
+#[inline]
 pub fn get_movement_direction(binds: &Input) -> Point3D {
     let mut direction = Point3D::ZERO;
 
@@ -29,6 +29,7 @@ pub fn get_movement_direction(binds: &Input) -> Point3D {
 }
 
 #[must_use]
+#[inline]
 pub fn get_rotation_directions(yaw: f32, pitch: f32) -> (Vector3D, Vector3D, Vector3D) {
     let front = Vector3D::new(yaw.cos() * pitch.cos(), pitch.sin(), yaw.sin() * pitch.cos()).normalize();
     let right = front.cross(Vector3D::Y).normalize();
@@ -38,6 +39,7 @@ pub fn get_rotation_directions(yaw: f32, pitch: f32) -> (Vector3D, Vector3D, Vec
 
 #[must_use]
 #[allow(clippy::fn_params_excessive_bools)]
+#[inline]
 pub const fn vertex_ao(side1: bool, side2: bool, corner: bool) -> f32 {
     AMBIENT_OCCLUSION_VALUES[if side1 && side2 {
         0
@@ -66,6 +68,7 @@ impl AsColor for Face {
 
 pub const SIZE_CAP: f32 = 960.0;
 
+#[inline]
 pub fn format_bytes(bytes: usize) -> String {
     let mut value = bytes as f32;
 
@@ -80,82 +83,82 @@ pub fn format_bytes(bytes: usize) -> String {
     format!("{value:.2}GB")
 }
 
-#[allow(dead_code)]
-pub fn cube_outline(Cube3D { origin, size }: Cube3D, white_pixel_uv: Point2D) -> Vec<CommonVertex> {
-    [
-        [[0.0, 0.0, 0.0], [0.0, size.y, 0.0]],
-        [[size.x, 0.0, 0.0], [size.x, size.y, 0.0]],
-        [[0.0, 0.0, size.z], [0.0, size.y, size.z]],
-        [[size.x, 0.0, size.z], [size.x, size.y, size.z]],
-        [[0.0, 0.0, 0.0], [size.x, 0.0, 0.0]],
-        [[0.0, 0.0, 0.0], [0.0, 0.0, size.z]],
-        [[size.x, 0.0, 0.0], [size.x, 0.0, size.z]],
-        [[0.0, 0.0, size.z], [size.x, 0.0, size.z]],
-        [[0.0, size.y, 0.0], [size.x, size.y, 0.0]],
-        [[0.0, size.y, 0.0], [0.0, size.y, size.z]],
-        [[size.x, size.y, 0.0], [size.x, size.y, size.z]],
-        [[0.0, size.y, size.z], [size.x, size.y, size.z]],
-    ]
-    .into_iter()
-    .fold(Vec::new(), |mut vertices, [start, end]| {
-        vertices.extend([
-            CommonVertex {
-                position: origin + Point3D::from_array(start),
-                color: Color::BLUE.as_value(),
-                uv: white_pixel_uv,
-                clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
-                _pad: [0; 8],
-            },
-            CommonVertex {
-                position: origin + Point3D::from_array(end),
-                color: Color::BLUE.as_value(),
-                uv: white_pixel_uv,
-                clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
-                _pad: [0; 8],
-            },
-        ]);
+// #[allow(dead_code)]
+// pub fn cube_outline(Cube3D { origin, size }: Cube3D, white_pixel_uv: Point2D)
+// -> Vec<CommonVertex> {     [
+//         [[0.0, 0.0, 0.0], [0.0, size.y, 0.0]],
+//         [[size.x, 0.0, 0.0], [size.x, size.y, 0.0]],
+//         [[0.0, 0.0, size.z], [0.0, size.y, size.z]],
+//         [[size.x, 0.0, size.z], [size.x, size.y, size.z]],
+//         [[0.0, 0.0, 0.0], [size.x, 0.0, 0.0]],
+//         [[0.0, 0.0, 0.0], [0.0, 0.0, size.z]],
+//         [[size.x, 0.0, 0.0], [size.x, 0.0, size.z]],
+//         [[0.0, 0.0, size.z], [size.x, 0.0, size.z]],
+//         [[0.0, size.y, 0.0], [size.x, size.y, 0.0]],
+//         [[0.0, size.y, 0.0], [0.0, size.y, size.z]],
+//         [[size.x, size.y, 0.0], [size.x, size.y, size.z]],
+//         [[0.0, size.y, size.z], [size.x, size.y, size.z]],
+//     ]
+//     .into_iter()
+//     .fold(Vec::new(), |mut vertices, [start, end]| {
+//         vertices.extend([
+//             CommonVertex {
+//                 position: origin + Point3D::from_array(start),
+//                 color: Color::BLUE.as_value(),
+//                 uv: white_pixel_uv,
+//                 clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+//                 _pad: [0; 8],
+//             },
+//             CommonVertex {
+//                 position: origin + Point3D::from_array(end),
+//                 color: Color::BLUE.as_value(),
+//                 uv: white_pixel_uv,
+//                 clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+//                 _pad: [0; 8],
+//             },
+//         ]);
 
-        vertices
-    })
-}
+//         vertices
+//     })
+// }
 
-#[allow(dead_code)]
-pub fn aabb_outline(Aabb { min, max }: Aabb, white_pixel_uv: Point2D) -> Vec<CommonVertex> {
-    let size = (max - min).as_vec3();
+// #[allow(dead_code)]
+// pub fn aabb_outline(Aabb { min, max }: Aabb, white_pixel_uv: Point2D) ->
+// Vec<CommonVertex> {     let size = (max - min).as_vec3();
 
-    [
-        [[0.0, 0.0, 0.0], [0.0, size.y, 0.0]],
-        [[size.x, 0.0, 0.0], [size.x, size.y, 0.0]],
-        [[0.0, 0.0, size.z], [0.0, size.y, size.z]],
-        [[size.x, 0.0, size.z], [size.x, size.y, size.z]],
-        [[0.0, 0.0, 0.0], [size.x, 0.0, 0.0]],
-        [[0.0, 0.0, 0.0], [0.0, 0.0, size.z]],
-        [[size.x, 0.0, 0.0], [size.x, 0.0, size.z]],
-        [[0.0, 0.0, size.z], [size.x, 0.0, size.z]],
-        [[0.0, size.y, 0.0], [size.x, size.y, 0.0]],
-        [[0.0, size.y, 0.0], [0.0, size.y, size.z]],
-        [[size.x, size.y, 0.0], [size.x, size.y, size.z]],
-        [[0.0, size.y, size.z], [size.x, size.y, size.z]],
-    ]
-    .into_iter()
-    .fold(Vec::new(), |mut vertices, [start, end]| {
-        vertices.extend([
-            CommonVertex {
-                position: min.as_vec3() + Point3D::from_array(start),
-                color: Color::BLUE.as_value(),
-                uv: white_pixel_uv,
-                clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
-                _pad: [0; 8],
-            },
-            CommonVertex {
-                position: min.as_vec3() + Point3D::from_array(end),
-                color: Color::BLUE.as_value(),
-                uv: white_pixel_uv,
-                clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
-                _pad: [0; 8],
-            },
-        ]);
+//     [
+//         [[0.0, 0.0, 0.0], [0.0, size.y, 0.0]],
+//         [[size.x, 0.0, 0.0], [size.x, size.y, 0.0]],
+//         [[0.0, 0.0, size.z], [0.0, size.y, size.z]],
+//         [[size.x, 0.0, size.z], [size.x, size.y, size.z]],
+//         [[0.0, 0.0, 0.0], [size.x, 0.0, 0.0]],
+//         [[0.0, 0.0, 0.0], [0.0, 0.0, size.z]],
+//         [[size.x, 0.0, 0.0], [size.x, 0.0, size.z]],
+//         [[0.0, 0.0, size.z], [size.x, 0.0, size.z]],
+//         [[0.0, size.y, 0.0], [size.x, size.y, 0.0]],
+//         [[0.0, size.y, 0.0], [0.0, size.y, size.z]],
+//         [[size.x, size.y, 0.0], [size.x, size.y, size.z]],
+//         [[0.0, size.y, size.z], [size.x, size.y, size.z]],
+//     ]
+//     .into_iter()
+//     .fold(Vec::new(), |mut vertices, [start, end]| {
+//         vertices.extend([
+//             CommonVertex {
+//                 position: min.as_vec3() + Point3D::from_array(start),
+//                 color: Color::BLUE.as_value(),
+//                 uv: white_pixel_uv,
+//                 clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+//                 _pad: [0; 8],
+//             },
+//             CommonVertex {
+//                 position: min.as_vec3() + Point3D::from_array(end),
+//                 color: Color::BLUE.as_value(),
+//                 uv: white_pixel_uv,
+//                 clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+//                 _pad: [0; 8],
+//             },
+//         ]);
 
-        vertices
-    })
-}
+//         vertices
+//     })
+// }

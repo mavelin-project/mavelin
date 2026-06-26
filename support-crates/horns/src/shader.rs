@@ -25,12 +25,14 @@ pub enum UniformValue<'a> {
     Mat4x4([f32; 16]),
     Mat3x3([f32; 9]),
     Texture(&'a glow::NativeTexture),
+    TextureBuffer(&'a glow::NativeTexture),
 }
 
 macro_rules! uniform_values {
-    ($([$typo:ty => $variant:ident]($name:ident): $code:expr),*) => {
+    ($([($($generic:ident: $generic_path:path)?) -> $typo:ty => $variant:ident]($name:ident): $code:expr),*) => {
         $(
-            impl<'a> From<$typo> for UniformValue<'a> {
+            impl<'a, $($generic: $generic_path)?> From<$typo> for UniformValue<'a> {
+                #[inline]
                 fn from($name: $typo) -> Self {
                     Self::$variant($code)
                 }
@@ -40,27 +42,28 @@ macro_rules! uniform_values {
 }
 
 uniform_values! {
-    [bool                         => Boolean](value): value,
-    [i32                          => I32    ](value): value,
-    [[i32; 2]                     => I32x2  ](value): value,
-    [[i32; 3]                     => I32x3  ](value): value,
-    [[i32; 4]                     => I32x4  ](value): value,
-    [f32                          => F32    ](value): value,
-    [[f32; 2]                     => F32x2  ](value): value,
-    [[f32; 3]                     => F32x3  ](value): value,
-    [[f32; 4]                     => F32x4  ](value): value,
-    [[f32; 9]                     => Mat3x3 ](value): value,
-    [[f32; 16]                    => Mat4x4 ](value): value,
-    [glam::IVec2                  => I32x2  ](value): value.to_array(),
-    [glam::IVec3                  => I32x3  ](value): value.to_array(),
-    [glam::IVec4                  => I32x4  ](value): value.to_array(),
-    [glam::Vec2                   => F32x2  ](value): value.to_array(),
-    [glam::Vec3                   => F32x3  ](value): value.to_array(),
-    [glam::Vec4                   => F32x4  ](value): value.to_array(),
-    [glam::Mat3                   => Mat3x3 ](value): value.to_cols_array(),
-    [glam::Mat4                   => Mat4x4 ](value): value.to_cols_array(),
-    [crate::SampledTexture2d<'a>  => Texture](value): &value.texture.ptr,
-    [&'a crate::Texture2d         => Texture](value): &value.ptr
+    [() -> bool                         => Boolean](value): value,
+    [() -> i32                          => I32    ](value): value,
+    [() -> [i32; 2]                     => I32x2  ](value): value,
+    [() -> [i32; 3]                     => I32x3  ](value): value,
+    [() -> [i32; 4]                     => I32x4  ](value): value,
+    [() -> f32                          => F32    ](value): value,
+    [() -> [f32; 2]                     => F32x2  ](value): value,
+    [() -> [f32; 3]                     => F32x3  ](value): value,
+    [() -> [f32; 4]                     => F32x4  ](value): value,
+    [() -> [f32; 9]                     => Mat3x3 ](value): value,
+    [() -> [f32; 16]                    => Mat4x4 ](value): value,
+    [() -> glam::IVec2                  => I32x2  ](value): value.to_array(),
+    [() -> glam::IVec3                  => I32x3  ](value): value.to_array(),
+    [() -> glam::IVec4                  => I32x4  ](value): value.to_array(),
+    [() -> glam::Vec2                   => F32x2  ](value): value.to_array(),
+    [() -> glam::Vec3                   => F32x3  ](value): value.to_array(),
+    [() -> glam::Vec4                   => F32x4  ](value): value.to_array(),
+    [() -> glam::Mat3                   => Mat3x3 ](value): value.to_cols_array(),
+    [() -> glam::Mat4                   => Mat4x4 ](value): value.to_cols_array(),
+    [() -> crate::SampledTexture2d<'a>  => Texture](value): &value.texture.ptr,
+    [() -> &'a crate::Texture2d         => Texture](value): &value.ptr,
+    [(T: bytemuck::NoUninit) -> &'a crate::TextureBuffer<T> => TextureBuffer](value): &value.texture_ptr
 }
 
 pub struct ProgramBinder<'a> {
@@ -90,6 +93,14 @@ impl ProgramBinder<'_> {
                     UniformValue::Texture(ptr) => {
                         self.program.gl.active_texture(self.texture_id.1);
                         self.program.gl.bind_texture(glow::TEXTURE_2D, Some(*ptr));
+                        self.program.gl.uniform_1_i32(location, self.texture_id.0);
+
+                        self.texture_id.0 += 1;
+                        self.texture_id.1 += 1;
+                    }
+                    UniformValue::TextureBuffer(ptr) => {
+                        self.program.gl.active_texture(self.texture_id.1);
+                        self.program.gl.bind_texture(glow::TEXTURE_BUFFER, Some(*ptr));
                         self.program.gl.uniform_1_i32(location, self.texture_id.0);
 
                         self.texture_id.0 += 1;
@@ -214,6 +225,7 @@ impl Program {
         }
     }
 
+    #[inline]
     pub fn bind(&self) -> ProgramBinder<'_> {
         unsafe { self.gl.use_program(Some(self.ptr)) };
 
@@ -225,6 +237,7 @@ impl Program {
 }
 
 impl Drop for Program {
+    #[inline]
     fn drop(&mut self) {
         unsafe { self.gl.delete_program(self.ptr) };
     }

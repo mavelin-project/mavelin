@@ -158,3 +158,133 @@ impl<V: Vertex, S: Shader> Drop for VertexBuffer<V, S> {
         }
     }
 }
+
+pub struct TextureBuffer<T: bytemuck::NoUninit> {
+    gl: Rc<glow::Context>,
+    pub(crate) ptr: glow::NativeBuffer,
+    pub(crate) texture_ptr: glow::NativeTexture,
+    pub(crate) len: usize,
+    _phantom: PhantomData<T>,
+}
+
+impl<T: bytemuck::NoUninit> TextureBuffer<T> {
+    pub(crate) fn empty(gl: &Rc<glow::Context>, data: usize, is_dynamic: bool) -> Result<Self, Error> {
+        unsafe {
+            let ptr = gl.create_buffer().map_err(Error::BufferCreation)?;
+            let texture_ptr = gl.create_texture().map_err(Error::BufferCreation)?;
+
+            gl.bind_buffer(glow::TEXTURE_BUFFER, Some(ptr));
+            gl.buffer_data_size(
+                glow::TEXTURE_BUFFER,
+                (data * size_of::<T>()) as i32,
+                if is_dynamic { glow::DYNAMIC_DRAW } else { glow::STATIC_DRAW },
+            );
+
+            gl.bind_texture(glow::TEXTURE_BUFFER, Some(texture_ptr));
+            gl.tex_buffer(glow::TEXTURE_BUFFER, glow::RGBA32F, Some(ptr));
+            gl.bind_buffer(glow::TEXTURE_BUFFER, None);
+
+            Ok(Self {
+                gl: gl.clone(),
+                ptr,
+                texture_ptr,
+                len: data,
+                _phantom: PhantomData,
+            })
+        }
+    }
+
+    pub(crate) fn new(gl: &Rc<glow::Context>, data: &[T], is_dynamic: bool) -> Result<Self, Error> {
+        unsafe {
+            let ptr = gl.create_buffer().map_err(Error::BufferCreation)?;
+            let texture_ptr = gl.create_texture().map_err(Error::BufferCreation)?;
+
+            gl.bind_buffer(glow::TEXTURE_BUFFER, Some(ptr));
+            gl.buffer_data_u8_slice(
+                glow::TEXTURE_BUFFER,
+                bytemuck::cast_slice(data),
+                if is_dynamic { glow::DYNAMIC_DRAW } else { glow::STATIC_DRAW },
+            );
+
+            gl.bind_texture(glow::TEXTURE_BUFFER, Some(texture_ptr));
+            gl.tex_buffer(glow::TEXTURE_BUFFER, glow::RGBA32F, Some(ptr));
+            gl.bind_buffer(glow::TEXTURE_BUFFER, None);
+
+            Ok(Self {
+                gl: gl.clone(),
+                ptr,
+                texture_ptr,
+                len: data.len(),
+                _phantom: PhantomData,
+            })
+        }
+    }
+
+    pub fn dynamic_write(&self, data: &[T]) {
+        let data = bytemuck::cast_slice(data);
+
+        self.bind();
+
+        unsafe {
+            let ptr = self.gl.map_buffer_range(
+                glow::TEXTURE_BUFFER,
+                0,
+                data.len() as i32,
+                glow::MAP_WRITE_BIT | glow::MAP_INVALIDATE_BUFFER_BIT,
+            );
+
+            if ptr.is_null() {
+                eprintln!(
+                    "[warn] map_buffer_range returned null (current-size = {}, data-size = {})",
+                    self.len * size_of::<T>(),
+                    data.len()
+                );
+            } else {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+
+                self.gl.unmap_buffer(glow::TEXTURE_BUFFER);
+            }
+        }
+
+        self.unbind();
+    }
+
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[inline]
+    pub fn bind_texture(&self) {
+        unsafe { self.gl.bind_texture(glow::TEXTURE_BUFFER, Some(self.texture_ptr)) };
+    }
+
+    #[inline]
+    pub fn unbind_texture(&self) {
+        unsafe { self.gl.bind_texture(glow::TEXTURE_BUFFER, None) };
+    }
+
+    #[inline]
+    pub fn bind(&self) {
+        unsafe { self.gl.bind_buffer(glow::TEXTURE_BUFFER, Some(self.ptr)) };
+    }
+
+    #[inline]
+    pub fn unbind(&self) {
+        unsafe { self.gl.bind_buffer(glow::TEXTURE_BUFFER, None) };
+    }
+}
+
+impl<T: bytemuck::NoUninit> Drop for TextureBuffer<T> {
+    fn drop(&mut self) {
+        unsafe {
+            self.gl.bind_buffer(glow::TEXTURE_BUFFER, None);
+            self.gl.delete_buffer(self.ptr);
+        }
+    }
+}

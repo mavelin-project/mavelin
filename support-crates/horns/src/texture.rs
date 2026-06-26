@@ -77,14 +77,17 @@ impl Texture2d {
         }
     }
 
+    #[inline]
     pub const fn writable(&self) -> WritableTexture2d<'_> {
         WritableTexture2d { texture: self, level: 0 }
     }
 
+    #[inline]
     pub const fn writable_mipmap(&self, level: usize) -> WritableTexture2d<'_> {
         WritableTexture2d { texture: self, level }
     }
 
+    #[inline]
     pub fn with_filters(&self, minify_filter: MinifyFilter, magnify_filter: MagnifyFilter) -> SampledTexture2d<'_> {
         self.bind();
 
@@ -105,12 +108,14 @@ impl Texture2d {
         }
     }
 
+    #[inline]
     pub fn bind(&self) {
         unsafe {
             self.gl.bind_texture(glow::TEXTURE_2D, Some(self.ptr));
         }
     }
 
+    #[inline]
     pub fn unbind(&self) {
         unsafe {
             self.gl.bind_texture(glow::TEXTURE_2D, None);
@@ -119,6 +124,7 @@ impl Texture2d {
 }
 
 impl Drop for Texture2d {
+    #[inline]
     fn drop(&mut self) {
         unsafe { self.gl.delete_texture(self.ptr) };
     }
@@ -134,6 +140,7 @@ pub enum MinifyFilter {
 }
 
 impl MinifyFilter {
+    #[inline]
     const fn as_gl(&self) -> u32 {
         match self {
             Self::Nearest => glow::NEAREST,
@@ -152,6 +159,7 @@ pub enum MagnifyFilter {
 }
 
 impl MagnifyFilter {
+    #[inline]
     const fn as_gl(&self) -> u32 {
         match self {
             Self::Nearest => glow::NEAREST,
@@ -168,10 +176,12 @@ pub struct SampledTexture2d<'a> {
 }
 
 impl SampledTexture2d<'_> {
+    #[inline]
     pub fn bind(&self) {
         self.texture.bind();
     }
 
+    #[inline]
     pub fn unbind(&self) {
         self.texture.unbind();
     }
@@ -212,6 +222,7 @@ impl WritableTexture2d<'_> {
 }
 
 impl Drop for WritableTexture2d<'_> {
+    #[inline]
     fn drop(&mut self) {
         unsafe { self.texture.gl.bind_texture(glow::TEXTURE_2D, None) };
     }

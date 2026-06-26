@@ -14,6 +14,8 @@ mod chunk_manager;
 
 use core::fmt;
 
+pub use lasso::Spur;
+
 pub use self::{
     bfs_light::{BfsLight, LightNode},
     biome::BiomeBase,
@@ -25,9 +27,9 @@ pub use self::{
 };
 
 pub trait BlockSource {
-    fn get_block_id(&self, name: &str) -> u8;
-    fn blocks_light(&self, block: &str) -> bool;
-    fn light_consumption(&self, block: &str) -> u8;
+    fn get_block_id(&self, name: &str) -> u32;
+    fn blocks_light(&self, block: u32) -> bool;
+    fn light_consumption(&self, block: u32) -> u8;
 }
 
 pub fn new_boxed_array<T, const S: usize>(boxed_slice: Box<[T]>) -> Box<[T; S]> {

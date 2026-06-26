@@ -11,23 +11,28 @@ pub struct KeyboardController {
 }
 
 impl KeyboardController {
+    #[inline]
     pub fn is_key_pressed(&self, key: KeyCode) -> bool {
         self.pressed.contains(&key)
     }
 
+    #[inline]
     pub fn is_key_pressed_once(&self, key: KeyCode) -> bool {
         self.pressed_once.contains(&key)
     }
 
+    #[inline]
     pub fn is_key_released(&self, key: KeyCode) -> bool {
         self.released.contains(&key)
     }
 
+    #[inline]
     pub fn clear(&mut self) {
         self.pressed_once.clear();
         self.released.clear();
     }
 
+    #[inline]
     pub fn handle_keyboard_input(&mut self, code: KeyCode, is_pressed: bool, repeat: bool) {
         if is_pressed {
             if !repeat {
@@ -56,28 +61,34 @@ pub struct MouseController {
 
 impl MouseController {
     #[allow(dead_code)]
+    #[inline]
     pub fn is_pressed(&self, button: MouseButton) -> bool {
         self.pressed.contains(&button)
     }
 
+    #[inline]
     pub fn is_pressed_once(&self, button: MouseButton) -> bool {
         self.pressed_once.contains(&button)
     }
 
     #[allow(dead_code)]
+    #[inline]
     pub fn is_released(&self, button: MouseButton) -> bool {
         self.released.contains(&button)
     }
 
+    #[inline]
     pub fn clear(&mut self) {
         self.pressed_once.clear();
         self.released.clear();
     }
 
+    #[inline]
     pub const fn handle_mouse_motion(&mut self, position: Point2D) {
         self.position = position;
     }
 
+    #[inline]
     pub fn handle_mouse_button(&mut self, button: MouseButton, is_pressed: bool) {
         if is_pressed {
             self.pressed_once.insert(button);
@@ -97,6 +108,7 @@ pub struct Input {
 }
 
 impl Input {
+    #[inline]
     pub fn with_binds<T: Into<String>, I: IntoIterator<Item = (T, KeyCode)>>(binds: I) -> Self {
         Self {
             mouse: MouseController::default(),
@@ -106,20 +118,24 @@ impl Input {
     }
 
     #[allow(dead_code)]
+    #[inline]
     pub fn bind<T: Into<String>>(&mut self, name: T, key: KeyCode) {
         self.binds.insert(name.into(), key);
     }
 
+    #[inline]
     pub fn is_pressed<T: AsRef<str>>(&self, name: T) -> bool {
         self.binds.get(name.as_ref()).is_some_and(|&key| self.keyboard.is_key_pressed(key))
     }
 
     #[allow(dead_code)]
+    #[inline]
     pub fn is_pressed_once<T: AsRef<str>>(&self, name: T) -> bool {
         self.binds.get(name.as_ref()).is_some_and(|&key| self.keyboard.is_key_pressed_once(key))
     }
 
     #[allow(dead_code)]
+    #[inline]
     pub fn is_released<T: AsRef<str>>(&self, name: T) -> bool {
         self.binds.get(name.as_ref()).is_some_and(|&key| self.keyboard.is_key_released(key))
     }

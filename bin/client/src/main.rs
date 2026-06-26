@@ -34,7 +34,7 @@ use meralus_physics::{Aabb, AabbSource, PhysicsContext};
 use meralus_shared::{AsValue, Color, Face, IPoint2D, IPoint3D, Lerp, Point2D, Point3D, Quat, Rect, Size2D, Transform3D, USize2D, Vector2D, Vector3D};
 use meralus_storage::{Block, ResourceStorage, TextureStorage};
 use meralus_tween::{Animation, Tween};
-use meralus_world::{BfsLight, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, SUBCHUNK_COUNT, SubChunkBlockState};
+use meralus_world::{BfsLight, BlockSource, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, SUBCHUNK_COUNT, SubChunkBlockState};
 use tracing::info;
 
 use crate::{
@@ -52,7 +52,7 @@ use crate::{
         context::{ArrangeStrategy, Arrangement, MeasureStrategy, RenderContext, UiContext, UiSubcontext, WidgetState},
     },
     scenes::{Screen, loading_overlay::LoadingOverlay},
-    util::{cube_outline, get_movement_direction, get_rotation_directions, vertex_ao},
+    util::{get_movement_direction, get_rotation_directions, vertex_ao},
     world::{EntityData, EntityManager, World, WorldType},
 };
 
@@ -145,8 +145,8 @@ enum LightStyle {
 
 impl LightStyle {
     #[inline]
-    fn does_block_have_ao(resource_storage: &ResourceStorage, block: &str) -> bool {
-        if block == "game:air" {
+    fn does_block_have_ao(resource_storage: &ResourceStorage, block: u32) -> bool {
+        if block == 0 {
             false
         } else {
             resource_storage
@@ -194,9 +194,9 @@ impl LightStyle {
                 *light = (sky_light << 4) | (block_light & 0xF);
 
                 *ao = vertex_ao(
-                    Self::does_block_have_ao(resource_storage, side1_block.map_or("game:air", |state| &state.name)),
-                    Self::does_block_have_ao(resource_storage, side2_block.map_or("game:air", |state| &state.name)),
-                    Self::does_block_have_ao(resource_storage, corner_block.map_or("game:air", |state| &state.name)),
+                    Self::does_block_have_ao(resource_storage, side1_block.map_or(0, |state| state.id)),
+                    Self::does_block_have_ao(resource_storage, side2_block.map_or(0, |state| state.id)),
+                    Self::does_block_have_ao(resource_storage, corner_block.map_or(0, |state| state.id)),
                 );
             } else {
                 *light = chunks.get_light_level(light_source);
@@ -221,18 +221,9 @@ impl LightStyle {
         for ([side1, side2, corner], ao) in corners.into_iter().zip(&mut aos) {
             if have_ao {
                 *ao = vertex_ao(
-                    Self::does_block_have_ao(
-                        resource_storage,
-                        chunks.get_block(world_position + side1).map_or("game:air", |state| &state.name),
-                    ),
-                    Self::does_block_have_ao(
-                        resource_storage,
-                        chunks.get_block(world_position + side2).map_or("game:air", |state| &state.name),
-                    ),
-                    Self::does_block_have_ao(
-                        resource_storage,
-                        chunks.get_block(world_position + corner).map_or("game:air", |state| &state.name),
-                    ),
+                    Self::does_block_have_ao(resource_storage, chunks.get_block(world_position + side1).map_or(0, |state| state.id)),
+                    Self::does_block_have_ao(resource_storage, chunks.get_block(world_position + side2).map_or(0, |state| state.id)),
+                    Self::does_block_have_ao(resource_storage, chunks.get_block(world_position + corner).map_or(0, |state| state.id)),
                 );
             }
         }
@@ -510,14 +501,14 @@ impl State for GameLoop {
                     && world
                         .chunk_manager
                         .get_block(looking_at.position + looking_at.hit_side.as_normal())
-                        .is_some_and(|block| block.name == "game:air")
+                        .is_some_and(SubChunkBlockState::is_air)
                     && let Some((item, _)) = world.player.inventory.take_hotbar_item(current_slot)
                 {
                     let position = looking_at.position + looking_at.hit_side.as_normal();
                     let chunk = ChunkManager::<()>::to_local(position);
 
                     if let Some(local) = world.chunk_manager.to_chunk_local(position) {
-                        let block = self.resource_manager.get_block(&item).unwrap();
+                        let block = self.resource_manager.blocks.get(item).unwrap();
 
                         world.chunk_manager.set_block(position, SubChunkBlockState::new(item));
 
@@ -757,13 +748,11 @@ impl State for GameLoop {
 
             buffer.clear_color_and_depth(Color::BLACK.to_linear_rgba(), 1.0);
 
-            self.common_renderer
-                .draw_rect(
-                    Point2D::ZERO,
-                    Size2D::new(width as f32, height as f32),
-                    get_sky_color(world.clock.get_visual_progress(), 0.0),
-                )
-                .unwrap();
+            self.common_renderer.draw_rect(
+                Point2D::ZERO,
+                Size2D::new(width as f32, height as f32),
+                get_sky_color(world.clock.get_visual_progress(), 0.0),
+            );
 
             self.common_renderer.render(buffer, backend, None, window_context.window_size());
 
@@ -825,18 +814,14 @@ impl State for GameLoop {
             // }
 
             if let Some(result) = world.camera.looking_at
-                && let Some(mut model) = world
-                    .chunk_manager
-                    .get_block(result.position)
-                    .filter(|&b| b.name != "game:air")
-                    .and_then(|block| {
-                        self.resource_manager
-                            .models
-                            .get(self.resource_manager.blocks.get_model_by_name(&block.name))
-                            .map(|model| model.bounding_box)
-                    })
+                && let Some(mut model) = world.chunk_manager.get_block(result.position).filter(|b| !b.is_air()).and_then(|block| {
+                    self.resource_manager
+                        .models
+                        .get(self.resource_manager.blocks.get_model_by_name(block.id))
+                        .map(|model| model.bounding_box)
+                })
             {
-                let _white_pixel = self.common_renderer.white_pixel_uv();
+                // let _white_pixel = self.common_renderer.white_pixel_uv();
 
                 model.min += result.position.as_dvec3();
                 model.max += result.position.as_dvec3();
@@ -997,28 +982,30 @@ Rendered subchunks: {} / {total_subchunks}",
                     world
                         .camera
                         .looking_at
-                        .and_then(|result| world
-                            .chunk_manager
-                            .get_block(result.position)
-                            .filter(|&b| b.name != "game:air")
-                            .and_then(|state| self.resource_manager.get_block(&state.name).map(|block| format!(
-                                "{} ({}){}",
-                                block.id(),
-                                result.hit_side,
-                                if state.properties.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!(
-                                        ". Properties:\n{}",
-                                        state
-                                            .properties
-                                            .iter()
-                                            .map(|(name, value)| format!("  #{name} = {value}"))
-                                            .collect::<Vec<_>>()
-                                            .join("\n")
-                                    )
-                                }
-                            ))))
+                        .and_then(
+                            |result| world.chunk_manager.get_block(result.position).filter(|b| !b.is_air()).and_then(|state| self
+                                .resource_manager
+                                .blocks
+                                .get(state.id)
+                                .map(|block| format!(
+                                    "{} ({}){}",
+                                    block.id(),
+                                    result.hit_side,
+                                    if state.properties.is_empty() {
+                                        String::new()
+                                    } else {
+                                        format!(
+                                            ". Properties:\n{}",
+                                            state
+                                                .properties
+                                                .iter()
+                                                .map(|(name, value)| format!("  #{name} = {value}"))
+                                                .collect::<Vec<_>>()
+                                                .join("\n")
+                                        )
+                                    }
+                                )))
+                        )
                         .unwrap_or_else(|| String::from("nothing")),
                     rendered_subchunks.draw_calls
                 );
@@ -1058,7 +1045,7 @@ Rendered subchunks: {} / {total_subchunks}",
                 let model = self
                     .resource_manager
                     .models
-                    .get_unchecked(self.resource_manager.blocks.get_model_by_name(&item.id));
+                    .get_unchecked(self.resource_manager.blocks.get_model_by_name(item.id));
                 let origin = Point2D::new((bounds.size.x / 2.0) - (HOTBAR_WIDTH / 2.0), bounds.size.y - SLOT_SIZE - 8.0);
                 let slot_offset = (origin + Point2D::new(4.0, 4.0) + Point2D::new(i as f32 * SLOT_SIZE, 0.0)).extend(20.0);
 
@@ -1354,50 +1341,50 @@ Rendered subchunks: {} / {total_subchunks}",
 
                             let mut world = World::new(backend, self.resource_manager.clone(), chunk_manager, WorldType::Local);
 
-                            world.player.inventory.try_insert(Item {
-                                id: "game:torch".to_owned(),
+                            world.player.inventory.try_insert(&Item {
+                                id: self.resource_manager.get_block_id("game:torch"),
                                 ty: ItemType::Block,
                                 amount: 64,
                             });
 
-                            world.player.inventory.try_insert(Item {
-                                id: "game:cobblestone".to_owned(),
+                            world.player.inventory.try_insert(&Item {
+                                id: self.resource_manager.get_block_id("game:cobblestone"),
                                 ty: ItemType::Block,
                                 amount: 64,
                             });
 
-                            world.player.inventory.try_insert(Item {
-                                id: "game:bricks".to_owned(),
+                            world.player.inventory.try_insert(&Item {
+                                id: self.resource_manager.get_block_id("game:bricks"),
                                 ty: ItemType::Block,
                                 amount: 64,
                             });
 
-                            world.player.inventory.try_insert(Item {
-                                id: "game:green_glass_block".to_owned(),
+                            world.player.inventory.try_insert(&Item {
+                                id: self.resource_manager.get_block_id("game:green_glass_block"),
                                 ty: ItemType::Block,
                                 amount: 64,
                             });
 
-                            world.player.inventory.try_insert(Item {
-                                id: "game:wood".to_owned(),
+                            world.player.inventory.try_insert(&Item {
+                                id: self.resource_manager.get_block_id("game:wood"),
                                 ty: ItemType::Block,
                                 amount: 64,
                             });
 
-                            world.player.inventory.try_insert(Item {
-                                id: "game:stone_bricks".to_owned(),
+                            world.player.inventory.try_insert(&Item {
+                                id: self.resource_manager.get_block_id("game:stone_bricks"),
                                 ty: ItemType::Block,
                                 amount: 64,
                             });
 
-                            world.player.inventory.try_insert(Item {
-                                id: "game:blue_rose".to_owned(),
+                            world.player.inventory.try_insert(&Item {
+                                id: self.resource_manager.get_block_id("game:blue_rose"),
                                 ty: ItemType::Block,
                                 amount: 16,
                             });
 
-                            world.player.inventory.try_insert(Item {
-                                id: "game:debug".to_owned(),
+                            world.player.inventory.try_insert(&Item {
+                                id: self.resource_manager.get_block_id("game:debug"),
                                 ty: ItemType::Block,
                                 amount: 1,
                             });
@@ -1491,14 +1478,14 @@ impl<C: ChunkCache> AabbSource for AabbProvider<'_, C> {
         }
 
         if let Some(block) = self.chunk_manager.get_block(correct_position.as_ivec3())
-            && self.storage.blocks.get_unchecked(self.storage.blocks.get_by_name(&block.name)).collidable()
+            && self.storage.blocks.get_unchecked(block.id).collidable()
         {
             let block_pos = position.as_dvec3();
 
             for aabb in self
                 .storage
                 .models
-                .get_unchecked(self.storage.blocks.get_model_by_name(&block.name))
+                .get_unchecked(self.storage.blocks.get_model_by_name(block.id))
                 .elements
                 .iter()
                 .map(|element| element.cube)
@@ -1515,8 +1502,8 @@ impl<C: ChunkCache> AabbSource for AabbProvider<'_, C> {
     fn get_block_aabb(&self, position: IPoint3D) -> Option<Aabb> {
         self.chunk_manager
             .get_block(position)
-            .filter(|&b| b.name != "game:air" && self.storage.blocks.get_unchecked(self.storage.blocks.get_by_name(&b.name)).selectable())
-            .and_then(|block| self.storage.models.get(self.storage.blocks.get_model_by_name(&block.name)))
+            .filter(|&b| !b.is_air() && self.storage.blocks.get_unchecked(b.id).selectable())
+            .and_then(|block| self.storage.models.get(self.storage.blocks.get_model_by_name(block.id)))
             .map(|element| element.bounding_box)
     }
 }
@@ -1531,14 +1518,14 @@ impl<C: ChunkCache> AabbSource for LimitedAabbProvider<'_, C> {
         let correct_position = position.floor();
 
         if let Some(block) = self.chunk_manager.get_block(correct_position.as_ivec3())
-            && self.storage.blocks.get_unchecked(self.storage.blocks.get_by_name(&block.name)).collidable()
+            && self.storage.blocks.get_unchecked(block.id).collidable()
         {
             let block_pos = position.as_dvec3();
 
             for aabb in self
                 .storage
                 .models
-                .get_unchecked(self.storage.blocks.get_model_by_name(&block.name))
+                .get_unchecked(self.storage.blocks.get_model_by_name(block.id))
                 .elements
                 .iter()
                 .map(|element| element.cube)
@@ -1555,8 +1542,8 @@ impl<C: ChunkCache> AabbSource for LimitedAabbProvider<'_, C> {
     fn get_block_aabb(&self, position: IPoint3D) -> Option<Aabb> {
         self.chunk_manager
             .get_block(position)
-            .filter(|&b| b.name != "game:air" && self.storage.blocks.get_unchecked(self.storage.blocks.get_by_name(&b.name)).selectable())
-            .and_then(|block| self.storage.models.get(self.storage.blocks.get_model_by_name(&block.name)))
+            .filter(|&b| !b.is_air() && self.storage.blocks.get_unchecked(b.id).selectable())
+            .and_then(|block| self.storage.models.get(self.storage.blocks.get_model_by_name(block.id)))
             .map(|element| element.bounding_box)
     }
 }

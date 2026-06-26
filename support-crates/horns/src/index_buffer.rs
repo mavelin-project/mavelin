@@ -12,6 +12,7 @@ pub enum ElementType {
 }
 
 impl ElementType {
+    #[inline]
     pub const fn as_gl(&self) -> u32 {
         match self {
             Self::Triangles => glow::TRIANGLES,
@@ -27,18 +28,21 @@ pub trait GlPrimitive: bytemuck::NoUninit {
 }
 
 impl GlPrimitive for u8 {
+    #[inline]
     fn gl_code() -> u32 {
         glow::UNSIGNED_BYTE
     }
 }
 
 impl GlPrimitive for u16 {
+    #[inline]
     fn gl_code() -> u32 {
         glow::UNSIGNED_SHORT
     }
 }
 
 impl GlPrimitive for u32 {
+    #[inline]
     fn gl_code() -> u32 {
         glow::UNSIGNED_INT
     }
@@ -149,6 +153,7 @@ impl<I: GlPrimitive> IndexBuffer<I> {
 }
 
 impl<I: GlPrimitive> Drop for IndexBuffer<I> {
+    #[inline]
     fn drop(&mut self) {
         unsafe {
             self.gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, None);

@@ -50,9 +50,14 @@ impl ChunkGenerator {
         }
     }
 
-    pub fn generate_bare_terrain<T: BlockSource>(&self, chunk: &mut Chunk, _block_source: &T, biome_cache: &BiomeNoise) {
+    pub fn generate_bare_terrain<T: BlockSource>(&self, chunk: &mut Chunk, block_source: &T, biome_cache: &BiomeNoise) {
         let offset = IPoint3D::new(chunk.origin.x, 0, chunk.origin.y) * i32::from(B0);
         let terrain_noise = self.generate_terrain_noise(offset, IPoint3D::new(K.into(), B2.into(), L.into()), biome_cache);
+
+        let air = block_source.get_block_id("game:air");
+        let stone = block_source.get_block_id("game:stone");
+        let water = block_source.get_block_id("game:water");
+        let ice = block_source.get_block_id("game:ice");
 
         for i1 in 0..(B0 as usize) {
             for j1 in 0..(B0 as usize) {
@@ -85,15 +90,15 @@ impl ChunkGenerator {
                             for k2 in 0..4 {
                                 let temp = biome_cache.temp[(i1 * 4 + i2) * 16 + j1 * 4 + k2];
                                 let block_data = if d15 > 0.0 {
-                                    SubChunkBlockState::new("game:stone")
+                                    SubChunkBlockState::new(stone)
                                 } else if k1 * 8 + l1 < B1.into() {
                                     if temp < 0.5 && k1 * 8 + l1 >= const { B1 - 1 }.into() {
-                                        SubChunkBlockState::new("game:ice")
+                                        SubChunkBlockState::new(ice)
                                     } else {
-                                        SubChunkBlockState::new("game:water")
+                                        SubChunkBlockState::new(water)
                                     }
                                 } else {
-                                    SubChunkBlockState::new("game:air")
+                                    SubChunkBlockState::new(air)
                                 };
 
                                 chunk.set_block(USizePoint3D::new(j2 >> 11, j2 & 127, (j2 >> 7) & 15), block_data);
@@ -116,7 +121,7 @@ impl ChunkGenerator {
         }
     }
 
-    pub fn generate_biome_terarain<T: BlockSource>(&self, chunk: &mut Chunk, random: &mut Random, _block_source: &T, biome_cache: &BiomeNoise) {
+    pub fn generate_biome_terarain<T: BlockSource>(&self, chunk: &mut Chunk, random: &mut Random, block_source: &T, biome_cache: &BiomeNoise) {
         let top_start_y: u8 = 64;
         let d0: f64 = 0.03125;
         let chunk_origin = chunk.origin.as_dvec2() * 16.0;
@@ -135,6 +140,14 @@ impl ChunkGenerator {
             .stone_noise
             .generate_noise(chunk_origin.extend(0.0), IPoint3D::new(16, 16, 1), DPoint3D::splat(d0 * 2.0));
 
+        let air = block_source.get_block_id("game:air");
+        let stone = block_source.get_block_id("game:stone");
+        let water = block_source.get_block_id("game:water");
+        let dirt = block_source.get_block_id("game:dirt");
+        let grass_block = block_source.get_block_id("game:grass_block");
+        let snow = block_source.get_block_id("game:snow");
+        let sand = block_source.get_block_id("game:sand");
+
         for z in 0..16 {
             for x in 0..16 {
                 let biome = biome_cache.biomes[z + x * 16];
@@ -145,12 +158,12 @@ impl ChunkGenerator {
                 let mut j1 = -1;
 
                 let mut top = biome.top(
-                    SubChunkBlockState::new("game:sand"),
-                    SubChunkBlockState::new("game:snow"),
-                    SubChunkBlockState::new("game:grass_block"),
+                    SubChunkBlockState::new(sand),
+                    SubChunkBlockState::new(snow),
+                    SubChunkBlockState::new(grass_block),
                 );
 
-                let mut bottom = biome.bottom(SubChunkBlockState::new("game:sand"), SubChunkBlockState::new("game:dirt"));
+                let mut bottom = biome.bottom(SubChunkBlockState::new(sand), SubChunkBlockState::new(dirt));
 
                 for y in (0..128).rev() {
                     let position = USizePoint3D::new(x, y as usize, z);
@@ -159,26 +172,26 @@ impl ChunkGenerator {
                         // LegacyUtil173.setBlockData(chunkData, l1,
                         // BlockConstants.BEDROCK);
                     } else {
-                        let current_block = chunk.get_block(position).filter(|b| b.name != "game:air");
+                        let current_block = chunk.get_block(position).filter(|b| b.id != air);
 
                         if current_block.is_none() {
                             j1 = -1;
-                        } else if current_block.is_some_and(|state| state.name == "game:stone") {
+                        } else if current_block.is_some_and(|state| state.id == stone) {
                             if j1 == -1 {
                                 if i1 <= 0 {
-                                    top = SubChunkBlockState::new("game:air");
-                                    bottom = SubChunkBlockState::new("game:stone");
+                                    top = SubChunkBlockState::new(air);
+                                    bottom = SubChunkBlockState::new(stone);
                                 } else if y >= i32::from(top_start_y) - 4 && y <= i32::from(top_start_y) + 1 {
                                     top = biome.top(
-                                        SubChunkBlockState::new("game:sand"),
-                                        SubChunkBlockState::new("game:snow"),
-                                        SubChunkBlockState::new("game:grass_block"),
+                                        SubChunkBlockState::new(sand),
+                                        SubChunkBlockState::new(snow),
+                                        SubChunkBlockState::new(grass_block),
                                     );
 
-                                    bottom = biome.bottom(SubChunkBlockState::new("game:sand"), SubChunkBlockState::new("game:dirt"));
+                                    bottom = biome.bottom(SubChunkBlockState::new(sand), SubChunkBlockState::new(dirt));
 
                                     if flag1 {
-                                        top = SubChunkBlockState::new("game:air");
+                                        top = SubChunkBlockState::new(air);
                                     }
 
                                     // if flag1 {
@@ -186,13 +199,13 @@ impl ChunkGenerator {
                                     // }
 
                                     if flag {
-                                        top = SubChunkBlockState::new("game:sand");
-                                        bottom = SubChunkBlockState::new("game:sand");
+                                        top = SubChunkBlockState::new(sand);
+                                        bottom = SubChunkBlockState::new(sand);
                                     }
                                 }
 
-                                if y < i32::from(top_start_y) && top.name == "game:air" {
-                                    top = SubChunkBlockState::new("game:water");
+                                if y < i32::from(top_start_y) && top.id == air {
+                                    top = SubChunkBlockState::new(water);
                                 }
 
                                 j1 = i1;
@@ -356,7 +369,7 @@ impl ChunkGenerator {
         noise
     }
 
-    pub fn populate<C: ChunkAccess, T: BlockSource>(&self, chunk_manager: &mut C, _block_source: &T, world_seed: i64, chunk: IPoint2D) {
+    pub fn populate<C: ChunkAccess, T: BlockSource>(&self, chunk_manager: &mut C, block_source: &T, world_seed: i64, chunk: IPoint2D) {
         let origin = chunk * SUBCHUNK_SIZE_I32;
         let biomebase = self.biome_generator.get_biome_noise(origin + SUBCHUNK_SIZE_I32, IPoint2D::ONE).biomes[0];
         let mut random = Random::new(world_seed);
@@ -366,12 +379,22 @@ impl ChunkGenerator {
 
         random.set_seed(i64::from(chunk.x).wrapping_mul(i1).wrapping_add(i64::from(chunk.y).wrapping_mul(j1)) ^ world_seed);
 
+        let air = block_source.get_block_id("game:air");
+        let ice = block_source.get_block_id("game:stone");
+        let water = block_source.get_block_id("game:water");
+        let dirt = block_source.get_block_id("game:dirt");
+        let grass_block = block_source.get_block_id("game:grass_block");
+        let snow = block_source.get_block_id("game:snow");
+        let glass = block_source.get_block_id("game:glass");
+        let oak_log = block_source.get_block_id("game:oak_log");
+        let oak_leaves = block_source.get_block_id("game:oak_leaves");
+
         if random.next_i32(4) == 0 {
             let k1 = origin.x + random.next_i32(16) + 8;
             let l1 = random.next_i32(128);
             let i2 = origin.y + random.next_i32(16) + 8;
 
-            LakesGenerator.populate(chunk_manager, &mut random, IPoint3D::new(k1, l1, i2));
+            LakesGenerator { air, water }.populate(chunk_manager, &mut random, IPoint3D::new(k1, l1, i2));
         }
 
         let d0 = 0.5;
@@ -401,7 +424,7 @@ impl ChunkGenerator {
             let mut highest_y = CHUNK_HEIGHT_I32 - 1;
 
             for y in (0..CHUNK_HEIGHT_I32).rev() {
-                if chunk_manager.get_block(IPoint3D::new(j2, y, k2)).is_some_and(|block| block.name != "game:air") {
+                if chunk_manager.get_block(IPoint3D::new(j2, y, k2)).is_some_and(|block| !block.is_air()) {
                     highest_y = y;
 
                     break;
@@ -410,12 +433,45 @@ impl ChunkGenerator {
 
             if matches!(biomebase, BiomeBase::Forest) {
                 if random.next_i32(3) == 0 {
-                    ForestGenerator::populate(chunk_manager, &mut random, IPoint3D::new(j2, highest_y + 1, k2));
+                    ForestGenerator {
+                        air,
+                        oak_leaves,
+                        oak_log,
+                        grass_block,
+                        dirt,
+                        water,
+                        ice,
+                        glass,
+                        snow,
+                    }
+                    .populate(chunk_manager, &mut random, IPoint3D::new(j2, highest_y + 1, k2));
                 } else {
-                    TreesGenerator::populate(chunk_manager, &mut random, IPoint3D::new(j2, highest_y + 1, k2));
+                    TreesGenerator {
+                        air,
+                        oak_leaves,
+                        oak_log,
+                        grass_block,
+                        dirt,
+                        water,
+                        ice,
+                        glass,
+                        snow,
+                    }
+                    .populate(chunk_manager, &mut random, IPoint3D::new(j2, highest_y + 1, k2));
                 }
             } else {
-                TreesGenerator::populate(chunk_manager, &mut random, IPoint3D::new(j2, highest_y + 1, k2));
+                TreesGenerator {
+                    air,
+                    oak_leaves,
+                    oak_log,
+                    grass_block,
+                    dirt,
+                    water,
+                    ice,
+                    glass,
+                    snow,
+                }
+                .populate(chunk_manager, &mut random, IPoint3D::new(j2, highest_y + 1, k2));
             }
         }
     }

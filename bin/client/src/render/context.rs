@@ -1,8 +1,7 @@
 use horns::{RenderBackend, RenderInfo, RenderPass};
-use lyon_tessellation::{FillBuilder, TessellationError, path::builder::NoAttributes};
 use meralus_shared::{Color, Point2D, RRect, Rect, Size2D, Thickness, Transform3D, USize2D, Vector2D};
 
-use crate::render::common::{CommonRenderer, ObjectFit, Path};
+use crate::render::common::CommonRenderer;
 
 pub trait ArrangeStrategy {
     fn arrange(&mut self, context: &mut UiContext, widget: WidgetId);
@@ -213,8 +212,8 @@ impl Shape {
     fn paint(&self, renderer: &mut CommonRenderer, node: Rect) {
         match self {
             Self::Noop => (),
-            &Self::RRect(rounding, color) => _ = renderer.draw_round_rect(node.origin, node.size, rounding, color),
-            &Self::Rect(color) => _ = renderer.draw_rect(node.origin, node.size, color),
+            &Self::RRect(rounding, color) => renderer.draw_round_rect(node.origin, node.size, rounding, color),
+            &Self::Rect(color) => renderer.draw_rect(node.origin, node.size, color),
             Self::Text(text, font_size, font, color) => renderer.draw_text(node.origin, font, text, *color, *font_size, Some(node.size.x)),
         }
     }
@@ -648,10 +647,11 @@ impl<'a> RenderContext<'a> {
         self.common_renderer.measure(font, text, size, max_width)
     }
 
-    #[allow(dead_code)]
-    pub fn tessellate_with_color<F: FnOnce(&mut NoAttributes<FillBuilder>)>(&mut self, color: Color, tessellate: F) -> Result<(), TessellationError> {
-        self.common_renderer.draw_shape(tessellate, color)
-    }
+    // #[allow(dead_code)]
+    // pub fn tessellate_with_color<F: FnOnce(&mut NoAttributes<FillBuilder>)>(&mut
+    // self, color: Color, tessellate: F) -> Result<(), TessellationError> {
+    //     self.common_renderer.draw_shape(tessellate, color)
+    // }
 
     pub fn draw_text<F: Into<String>, T: Into<String>>(&mut self, position: Point2D, font: F, text: T, font_size: f32, color: Color, max_width: Option<f32>) {
         self.common_renderer.draw_text(position, font.into(), text.into(), color, font_size, max_width);
@@ -671,108 +671,105 @@ impl<'a> RenderContext<'a> {
             .draw_text(Point2D::new(x, y), font, text, Color::rgb(color.red, color.green, color.blue), font_size, None);
     }
 
-    #[allow(dead_code, clippy::trivially_copy_pass_by_ref)]
-    pub fn draw_image_native(&mut self, x: f32, y: f32, w: f32, h: f32, path: &&str, object_fit: &ObjectFit) {
-        self.common_renderer
-            .draw_image(Point2D::new(x, y), Size2D::new(w, h), path, *object_fit)
-            .unwrap_or_else(|e| panic!("(native) failed to draw image with next params {x}x{y}, {w}x{h}, {path}: {e}"));
-    }
+    // #[allow(dead_code, clippy::trivially_copy_pass_by_ref)]
+    // pub fn draw_image_native(&mut self, x: f32, y: f32, w: f32, h: f32, path:
+    // &&str, object_fit: &ObjectFit) {     self.common_renderer
+    //         .draw_image(Point2D::new(x, y), Size2D::new(w, h), path, *object_fit)
+    //         .unwrap_or_else(|e| panic!("(native) failed to draw image with next
+    // params {x}x{y}, {w}x{h}, {path}: {e}")); }
 
-    #[allow(dead_code)]
-    pub fn draw_round_image_native(&mut self, x: f32, y: f32, w: f32, h: f32, corner_radius: &NativeCornerRadius, path: &&str) {
-        self.common_renderer
-            .draw_round_image(
-                Point2D::new(x, y),
-                Size2D::new(w, h),
-                Thickness::new(
-                    corner_radius.top_left,
-                    corner_radius.top_right,
-                    corner_radius.bottom_left,
-                    corner_radius.bottom_right,
-                ),
-                path,
-            )
-            .unwrap_or_else(|e| panic!("(native) failed to draw rounded image with next params {x}x{y}, {w}x{h}, {path}: {e}"));
-    }
+    // #[allow(dead_code)]
+    // pub fn draw_round_image_native(&mut self, x: f32, y: f32, w: f32, h: f32,
+    // corner_radius: &NativeCornerRadius, path: &&str) {
+    //     self.common_renderer
+    //         .draw_round_image(
+    //             Point2D::new(x, y),
+    //             Size2D::new(w, h),
+    //             Thickness::new(
+    //                 corner_radius.top_left,
+    //                 corner_radius.top_right,
+    //                 corner_radius.bottom_left,
+    //                 corner_radius.bottom_right,
+    //             ),
+    //             path,
+    //         )
+    //         .unwrap_or_else(|e| panic!("(native) failed to draw rounded image
+    // with next params {x}x{y}, {w}x{h}, {path}: {e}")); }
 
-    #[allow(dead_code)]
-    pub fn draw_image<P: AsRef<std::path::Path>>(&mut self, rectangle: Rect, path: P) {
-        let path = path.as_ref();
+    // #[allow(dead_code)]
+    // pub fn draw_image<P: AsRef<std::path::Path>>(&mut self, rectangle: Rect,
+    // path: P) {     let path = path.as_ref();
 
-        self.common_renderer
-            .draw_image(rectangle.origin, rectangle.size, path, ObjectFit::Stretch)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "(native) failed to draw image with next params {}x{}, {}x{}, {}: {e}",
-                    rectangle.origin.x,
-                    rectangle.origin.y,
-                    rectangle.size.x,
-                    rectangle.size.y,
-                    path.display()
-                )
-            });
-    }
+    //     self.common_renderer
+    //         .draw_image(rectangle.origin, rectangle.size, path,
+    // ObjectFit::Stretch)         .unwrap_or_else(|e| {
+    //             panic!(
+    //                 "(native) failed to draw image with next params {}x{}, {}x{},
+    // {}: {e}",                 rectangle.origin.x,
+    //                 rectangle.origin.y,
+    //                 rectangle.size.x,
+    //                 rectangle.size.y,
+    //                 path.display()
+    //             )
+    //         });
+    // }
 
-    #[allow(dead_code)]
-    pub fn draw_round_image<P: AsRef<std::path::Path>>(&mut self, rectangle: RRect, path: P) {
-        let path = path.as_ref();
+    // #[allow(dead_code)]
+    // pub fn draw_round_image<P: AsRef<std::path::Path>>(&mut self, rectangle:
+    // RRect, path: P) {     let path = path.as_ref();
 
-        self.common_renderer
-            .draw_round_image(rectangle.origin, rectangle.size, rectangle.corner_radius, path)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "(native) failed to draw rounded image with next params {}x{}, {}x{}, {}: {e}",
-                    rectangle.origin.x,
-                    rectangle.origin.y,
-                    rectangle.size.x,
-                    rectangle.size.y,
-                    path.display()
-                )
-            });
-    }
+    //     self.common_renderer
+    //         .draw_round_image(rectangle.origin, rectangle.size,
+    // rectangle.corner_radius, path)         .unwrap_or_else(|e| {
+    //             panic!(
+    //                 "(native) failed to draw rounded image with next params
+    // {}x{}, {}x{}, {}: {e}",                 rectangle.origin.x,
+    //                 rectangle.origin.y,
+    //                 rectangle.size.x,
+    //                 rectangle.size.y,
+    //                 path.display()
+    //             )
+    //         });
+    // }
 
-    #[allow(dead_code)]
-    pub fn draw_image_path<P: AsRef<std::path::Path>>(&mut self, path: Path, image_path: P) {
-        let image_path = image_path.as_ref();
+    // #[allow(dead_code)]
+    // pub fn draw_image_path<P: AsRef<std::path::Path>>(&mut self, path: Path,
+    // image_path: P) {     let image_path = image_path.as_ref();
 
-        self.common_renderer
-            .draw_image_path(path, image_path)
-            .unwrap_or_else(|e| panic!("(native) failed to draw image path with next params {}: {e}", image_path.display()));
-    }
+    //     self.common_renderer
+    //         .draw_image_path(path, image_path)
+    //         .unwrap_or_else(|e| panic!("(native) failed to draw image path with
+    // next params {}: {e}", image_path.display())); }
 
     #[allow(dead_code, clippy::trivially_copy_pass_by_ref)]
     pub fn draw_rrect_native(&mut self, x: f32, y: f32, w: f32, h: f32, corner_radius: &NativeCornerRadius, color: &NativeColor) {
-        self.common_renderer
-            .draw_round_rect(
-                Point2D::new(x, y),
-                Size2D::new(w, h),
-                Thickness::new(
-                    corner_radius.top_left,
-                    corner_radius.top_right,
-                    corner_radius.bottom_left,
-                    corner_radius.bottom_right,
-                ),
-                Color::rgb(color.red, color.green, color.blue),
-            )
-            .unwrap();
+        self.common_renderer.draw_round_rect(
+            Point2D::new(x, y),
+            Size2D::new(w, h),
+            Thickness::new(
+                corner_radius.top_left,
+                corner_radius.top_right,
+                corner_radius.bottom_left,
+                corner_radius.bottom_right,
+            ),
+            Color::rgb(color.red, color.green, color.blue),
+        );
     }
 
     #[allow(dead_code, clippy::trivially_copy_pass_by_ref)]
     pub fn draw_rect_native(&mut self, x: f32, y: f32, w: f32, h: f32, color: &NativeColor) {
         self.common_renderer
-            .draw_rect(Point2D::new(x, y), Size2D::new(w, h), Color::rgb(color.red, color.green, color.blue))
-            .unwrap();
+            .draw_rect(Point2D::new(x, y), Size2D::new(w, h), Color::rgb(color.red, color.green, color.blue));
     }
 
     pub fn draw_rect(&mut self, rectangle: Rect, color: Color) {
-        self.common_renderer.draw_rect(rectangle.origin, rectangle.size, color).unwrap();
+        self.common_renderer.draw_rect(rectangle.origin, rectangle.size, color);
     }
 
     #[allow(dead_code)]
     pub fn draw_rounded_rect(&mut self, rectangle: RRect, color: Color) {
         self.common_renderer
-            .draw_round_rect(rectangle.origin, rectangle.size, rectangle.corner_radius, color)
-            .unwrap();
+            .draw_round_rect(rectangle.origin, rectangle.size, rectangle.corner_radius, color);
     }
 
     pub fn finish(self, backend: &RenderBackend, pass: &mut RenderPass, size: USize2D) -> RenderInfo {

@@ -166,6 +166,7 @@ pub struct ChunkRenderer {
 }
 
 impl ChunkRenderer {
+    #[inline]
     pub fn new(backend: &RenderBackend) -> Self {
         Self {
             shader: backend.create_program(&VoxelShader).unwrap(),
@@ -175,6 +176,7 @@ impl ChunkRenderer {
         }
     }
 
+    #[inline]
     pub fn set_subchunk(
         &mut self,
         origin: (IPoint2D, usize),
@@ -189,6 +191,7 @@ impl ChunkRenderer {
         self.sun_position = value;
     }
 
+    #[inline]
     fn is_subchunk_visible<T: Frustum>(frustum: &T, (origin, subchunk): (IPoint2D, usize)) -> bool {
         let origin = origin.as_vec2() * SUBCHUNK_SIZE_F32;
         let y = (subchunk * SUBCHUNK_SIZE) as f32;
@@ -199,6 +202,7 @@ impl ChunkRenderer {
         frustum.is_box_visible(origin, origin + Point3D::new(chunk_size, chunk_height, chunk_size))
     }
 
+    #[inline]
     pub fn is_subchunk_rendered<Q: ?Sized + Hash + Eq>(&self, k: &Q) -> bool
     where
         (IPoint2D, usize): Borrow<Q>,
@@ -206,6 +210,7 @@ impl ChunkRenderer {
         self.subchunks.contains_key(k)
     }
 
+    #[inline]
     fn bind_shader(&self, matrix: Transform3D, atlas: SampledTexture2d, lightmap: SampledTexture2d, sun_y: f32) {
         self.shader
             .bind()
@@ -311,6 +316,7 @@ impl ChunkRenderer {
         render_info
     }
 
+    #[inline]
     pub fn render(
         &mut self,
         pass: &mut RenderPass,

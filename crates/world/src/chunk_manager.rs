@@ -361,11 +361,11 @@ impl<C: ChunkCache> ChunkManager<C> {
                 for x in 0..SUBCHUNK_SIZE {
                     let position = USizePoint3D::new(x, 255, z);
 
-                    if chunk.get_block_unchecked(position).name == "game:air"
+                    if chunk.get_block_unchecked(position).is_air()
                     //_or(|block| !resource_manager.read().models.get(block.into()).unwrap().is_opaque)
                     {
                         chunk.set_sky_light(position, 15);
-                        queue.push(LightNode(position, chunk.origin));
+                        queue.push((LightNode(position, chunk.origin), 15));
                     }
                 }
             }
@@ -428,7 +428,7 @@ impl<C: ChunkCache> ChunkManager<C> {
         if let Some(chunk) = self.get_chunk_mut(chunk_position) {
             let local = Chunk::to_local(position);
 
-            chunk.set_block(local, SubChunkBlockState::new("game:air"));
+            chunk.set_block(local, SubChunkBlockState::air());
             chunk.dirty = true;
 
             for normal in Face::NORMALS {
@@ -464,10 +464,7 @@ impl<C: ChunkCache> ChunkManager<C> {
                 let mut y = local.y;
 
                 loop {
-                    if bfs_light.chunk_manager[chunk_position]
-                        .get_block(local.with_y(y))
-                        .is_some_and(|b| b.name != "game:air")
-                    {
+                    if bfs_light.chunk_manager[chunk_position].get_block(local.with_y(y)).is_some_and(|b| !b.is_air()) {
                         break;
                     }
 

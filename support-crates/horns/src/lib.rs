@@ -15,7 +15,7 @@ pub use self::{
     render_pass::{BackfaceCullingMode, Blend, BlendingFactor, Depth, DepthTest, DrawParams, RenderPass},
     shader::{Program, ProgramBinder, Shader, UniformValue},
     texture::{MagnifyFilter, MinifyFilter, SampledTexture2d, Texture2d, WritableTexture2d},
-    vertex_buffer::{Vertex, VertexBuffer},
+    vertex_buffer::{TextureBuffer, Vertex, VertexBuffer},
 };
 
 #[macro_export]
@@ -24,10 +24,12 @@ macro_rules! create_shader {
         struct $struct_name;
 
         impl $crate::Shader for $struct_name {
+            #[inline]
             fn vertex(&self) -> String {
                 std::fs::read_to_string(concat![$path, ".vs"]).unwrap()
             }
 
+            #[inline]
             fn fragment(&self) -> String {
                 std::fs::read_to_string(concat![$path, ".fs"]).unwrap()
             }
@@ -38,10 +40,12 @@ macro_rules! create_shader {
         $visibility struct $struct_name;
 
         impl $crate::Shader for $struct_name {
+            #[inline]
             fn vertex(&self) -> String {
                 std::fs::read_to_string(concat![$path, ".vs"]).unwrap()
             }
 
+            #[inline]
             fn fragment(&self) -> String {
                 std::fs::read_to_string(concat![$path, ".fs"]).unwrap()
             }
@@ -64,6 +68,7 @@ macro_rules! impl_vertex {
         }
 
         impl $crate::Vertex for $struct_name {
+            #[inline]
             fn get_bindings() -> &'static [(&'static str, usize, (u32, i32), bool)] {
                 Self::BINDINGS
             }
@@ -89,6 +94,7 @@ pub mod __vertex_impl {
 
     impl BindingType {
         #[doc(hidden)]
+        #[inline]
         pub const fn as_glow_ty(self) -> u32 {
             match self {
                 Self::f32 => glow::FLOAT,
@@ -112,16 +118,19 @@ pub struct RenderInfo {
 }
 
 impl RenderInfo {
+    #[inline]
     pub const fn default() -> Self {
         Self { draw_calls: 0, vertices: 0 }
     }
 
+    #[inline]
     pub const fn extend(&mut self, other: &Self) {
         self.draw_calls += other.draw_calls;
         self.vertices += other.vertices;
     }
 
     #[must_use]
+    #[inline]
     pub const fn take(&mut self) -> Self {
         Self {
             draw_calls: std::mem::replace(&mut self.draw_calls, 0),

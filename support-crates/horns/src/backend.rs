@@ -11,7 +11,7 @@ use glutin::{
 };
 use raw_window_handle::{DisplayHandle, WindowHandle};
 
-use crate::{ElementType, Error, GlPrimitive, IndexBuffer, Program, RenderInfo, RenderPass, Shader, Texture2d, Vertex, VertexBuffer};
+use crate::{ElementType, Error, GlPrimitive, IndexBuffer, Program, RenderInfo, RenderPass, Shader, Texture2d, TextureBuffer, Vertex, VertexBuffer};
 
 pub struct RenderBackend {
     pub(crate) gl: Rc<glow::Context>,
@@ -107,6 +107,11 @@ impl RenderBackend {
     }
 
     #[inline]
+    pub fn create_texture_buffer<T: bytemuck::NoUninit>(&self, data: &[T], is_dynamic: bool) -> Result<TextureBuffer<T>, Error> {
+        TextureBuffer::new(&self.gl, data, is_dynamic)
+    }
+
+    #[inline]
     pub fn create_vertex_buffer<V: Vertex, S: Shader>(&self, vertices: &[V], shader: &Program, is_dynamic: bool) -> Result<VertexBuffer<V, S>, Error> {
         VertexBuffer::new(&self.gl, shader, vertices, is_dynamic)
     }
@@ -114,6 +119,11 @@ impl RenderBackend {
     #[inline]
     pub fn create_index_buffer<I: GlPrimitive>(&self, element_type: ElementType, indices: &[I]) -> Result<IndexBuffer<I>, Error> {
         IndexBuffer::new(&self.gl, element_type, indices)
+    }
+
+    #[inline]
+    pub fn create_empty_texture_buffer<T: bytemuck::NoUninit>(&self, data: usize, is_dynamic: bool) -> Result<TextureBuffer<T>, Error> {
+        TextureBuffer::empty(&self.gl, data, is_dynamic)
     }
 
     #[inline]

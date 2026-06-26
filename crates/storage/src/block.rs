@@ -95,8 +95,8 @@ impl Block for BlockData {
 }
 
 pub struct BlockStorage {
-    id_to_block: HashMap<String, (usize, usize)>,
-    blocks: Vec<Box<dyn Block>>,
+    id_to_indices: HashMap<String, u32>,
+    blocks: Vec<(Box<dyn Block>, usize)>,
 }
 
 impl Default for BlockStorage {
@@ -109,35 +109,38 @@ impl BlockStorage {
     #[inline]
     pub fn new() -> Self {
         Self {
-            id_to_block: HashMap::default(),
+            id_to_indices: HashMap::default(),
             blocks: Vec::new(),
         }
     }
 
     #[inline]
-    pub fn get(&self, id: usize) -> Option<&dyn Block> {
-        self.blocks.get(id).map(AsRef::as_ref)
+    pub fn get(&self, id: u32) -> Option<&dyn Block> {
+        self.blocks.get(id as usize).map(|(block, _)| block.as_ref())
     }
 
     #[inline]
-    pub fn get_unchecked(&self, id: usize) -> &dyn Block {
-        unsafe { self.blocks.get_unchecked(id).as_ref() }
+    pub fn get_unchecked(&self, id: u32) -> &dyn Block {
+        unsafe { self.blocks.get_unchecked(id as usize).0.as_ref() }
     }
 
     #[inline]
-    pub fn get_by_name(&self, name: &str) -> usize {
-        self.id_to_block.get(name).copied().unwrap_or((0, 0)).0
+    pub fn get_by_name(&self, name: &str) -> u32 {
+        self.id_to_indices.get(name).copied().unwrap_or_default()
     }
 
     #[inline]
-    pub fn get_model_by_name(&self, name: &str) -> usize {
-        self.id_to_block.get(name).copied().unwrap_or((0, 0)).0
+    pub fn get_model_by_name(&self, name: u32) -> usize {
+        self.blocks.get(name as usize).map_or(0, |&(_, m)| m)
     }
 
     #[inline]
+    #[allow(clippy::cast_possible_truncation)]
     pub fn register<T: Block + 'static>(&mut self, name: String, block: T, model: usize) {
-        self.id_to_block.insert(name, (self.blocks.len(), model));
-        self.blocks.push(Box::new(block));
+        let key = self.blocks.len() as u32;
+
+        self.id_to_indices.insert(name, key);
+        self.blocks.push((Box::new(block), model));
     }
 
     fn load_block<P: AsRef<Path>>(root: &Mappings, path: P) -> LoadingResult<BlockModel> {

@@ -14,14 +14,14 @@ pub enum ItemType {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Item {
-    pub id: String,
+    pub id: u32,
     pub ty: ItemType,
     pub amount: usize,
 }
 
 #[derive(Default)]
 pub struct Inventory {
-    item_to_slots: HashMap<(String, ItemType), Vec<(usize, usize)>>,
+    item_to_slots: HashMap<(u32, ItemType), Vec<(usize, usize)>>,
     filled_slots: HashMap<(usize, usize), Item>,
 }
 
@@ -31,28 +31,34 @@ impl Inventory {
     pub const MAX_SLOT_COLUMNS: usize = 9;
     pub const MAX_SLOT_ROWS: usize = 5;
 
+    #[inline]
     pub fn is_hotbar_filled(&self) -> bool {
         self.filled_slots.keys().filter(|slot| slot.0 == Self::HOTBAR_ROW).count() == Self::MAX_SLOT_COLUMNS
     }
 
     #[allow(dead_code)]
+    #[inline]
     pub fn get_row_items(&self, row: usize) -> impl Iterator<Item = (usize, &Item)> {
         (0..Self::MAX_SLOT_COLUMNS).filter_map(move |column| self.get_item(row, column).map(|item| (column, item)))
     }
 
+    #[inline]
     pub fn get_hotbar_items(&self) -> impl Iterator<Item = (usize, &Item)> {
         (0..Self::MAX_SLOT_COLUMNS).filter_map(|column| self.get_hotbar_item(column).map(|item| (column, item)))
     }
 
-    pub fn take_hotbar_item(&mut self, column: usize) -> Option<(String, ItemType)> {
+    #[inline]
+    pub fn take_hotbar_item(&mut self, column: usize) -> Option<(u32, ItemType)> {
         self.take_item(Self::HOTBAR_ROW, column)
     }
 
+    #[inline]
     pub fn get_hotbar_item(&self, column: usize) -> Option<&Item> {
         self.get_item(Self::HOTBAR_ROW, column)
     }
 
-    pub fn take_item(&mut self, row: usize, column: usize) -> Option<(String, ItemType)> {
+    #[inline]
+    pub fn take_item(&mut self, row: usize, column: usize) -> Option<(u32, ItemType)> {
         let mut remove_item = false;
 
         let item = self.filled_slots.get_mut(&(row, column)).map(|item| {
@@ -62,7 +68,7 @@ impl Inventory {
 
             item.amount -= 1;
 
-            (item.id.clone(), item.ty)
+            (item.id, item.ty)
         });
 
         if remove_item {
@@ -72,12 +78,13 @@ impl Inventory {
         item
     }
 
+    #[inline]
     pub fn get_item(&self, row: usize, column: usize) -> Option<&Item> {
         self.filled_slots.get(&(row, column))
     }
 
-    pub fn try_insert(&mut self, item: Item) {
-        if let Some(slot) = self.item_to_slots.get(&(item.id.clone(), item.ty)).and_then(|slots| slots.last())
+    pub fn try_insert(&mut self, item: &Item) {
+        if let Some(slot) = self.item_to_slots.get(&(item.id, item.ty)).and_then(|slots| slots.last())
             && let Some(slot) = self.filled_slots.get_mut(slot).filter(|slot| slot.amount < Self::MAX_ITEM_AMOUNT)
         {
             slot.amount += 1;
@@ -161,20 +168,24 @@ impl PlayerController {
     pub const PLAYER_HALF_SIZE: DSize3D = DSize3D::new(0.35 / 2.0, 1.625 / 2.0, 0.35 / 2.0);
     pub const PLAYER_SIZE: DSize3D = DSize3D::new(0.35, 1.625, 0.35);
 
+    #[inline]
     pub fn calc_player_aabb(position: Point3D) -> Aabb {
         let position = position.as_dvec3();
 
         Aabb::new(position - Self::PLAYER_HALF_SIZE, position + Self::PLAYER_HALF_SIZE)
     }
 
+    #[inline]
     pub fn player_aabb(&self) -> Aabb {
         Self::calc_player_aabb(self.body.position)
     }
 
+    #[inline]
     pub fn camera_position(&self) -> Point3D {
         self.body.position + Point3D::Y * (Self::PLAYER_HALF_SIZE.y as f32 - 0.15) + self.bob_offset + Self::CAMERA_OFFSET
     }
 
+    #[inline]
     pub fn get_vector_for_rotation(&self) -> DVector3D {
         let _f = (self.yaw - f32::consts::PI).cos();
         let _f1 = (self.yaw - f32::consts::PI).sin();
@@ -184,6 +195,7 @@ impl PlayerController {
         DVector3D::new(f64::from(self.pitch), f64::from(self.yaw), 0.0)
     }
 
+    #[inline]
     pub fn handle_mouse(&mut self, delta: Vector2D) -> (f32, f32) {
         self.yaw = (delta.x * Self::MOUSE_SENSE).mul_add(Self::LOOK_SPEED, self.yaw);
         self.pitch = (delta.y * Self::MOUSE_SENSE).mul_add(-Self::LOOK_SPEED, self.pitch);

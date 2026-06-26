@@ -1,23 +1,20 @@
-use std::path::PathBuf;
+use std::collections::hash_map::Entry;
 
 use ahash::{HashMap, HashMapExt};
+use etagere::{AllocId, AtlasAllocator};
 use horns::{
-    Blend, BlendingFactor, DrawParams, ElementType, Error, IndexBuffer, Program, RenderBackend, RenderInfo, RenderPass, Shader, Texture2d, VertexBuffer,
-    impl_vertex,
+    Blend, BlendingFactor, DrawParams, ElementType, Error, IndexBuffer, Program, RenderBackend, RenderInfo, RenderPass, Shader, Texture2d, TextureBuffer,
+    VertexBuffer, impl_vertex,
 };
-use image::ImageBuffer;
-use lyon_tessellation::{
-    FillBuilder, FillGeometryBuilder, FillOptions, FillTessellator, FillVertex, GeometryBuilder, GeometryBuilderError, StrokeGeometryBuilder, StrokeVertex,
-    TessellationError, VertexId,
-    math::Transform,
-    path::{
-        Winding,
-        builder::{BorderRadii, NoAttributes, Transformed},
-    },
+use lyon_tessellation::{FillOptions, FillTessellator, VertexBuffers, geometry_builder::simple_builder};
+use meralus_shared::{AsValue, Color, ISize2D, Point2D, RRect, Rect, Size2D, Thickness, Transform3D, USize2D};
+use swash::{
+    CacheKey, FontRef,
+    scale::{Render, ScaleContext, Source, StrikeWith},
+    shape::ShapeContext,
+    text::cluster::Whitespace,
+    zeno::{Format, Vector},
 };
-use meck::TextureViewAtlas;
-use meralus_shared::{AsValue, Color, ConvertTo, Point2D, Point3D, RRect, Rect, Size2D, Thickness, Transform3D, USize2D, Vector2D, Vector4D};
-use swash::{CacheKey, FontRef, shape::ShapeContext};
 
 use crate::render::RawRenderBuffer;
 
@@ -36,205 +33,225 @@ impl Shader for ShapeShader {
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct CommonVertex {
-    pub clip: Vector4D,
-    pub position: Point3D,
-    pub uv: Point2D,
-    pub color: [u8; 4],
-    pub _pad: [u8; 8],
+    pub position: Point2D, // screen-space position
+    pub local_uv: Point2D, // local coords (SDF) OR atlas UV (glyph)
+    pub shape_id: u32,     // index into TBO
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct ShapeData {
+    pub color: [f32; 4],
+    pub half_size: [f32; 2],
+    pub radii: Thickness,
+    pub mode: u32,
+    _pad: u32,
 }
 
 impl_vertex! {
     CommonVertex {
-        position: [f32; 3],
-        color: [u8; 4],
-        uv: [f32; 2],
-        clip: [f32; 4],
-        _pad: [u8; 8]
+        position: [f32; 2],
+        local_uv: [f32; 2],
+        shape_id: [u32; 1]
     }
 }
 
-pub struct ShapeGeometryBuilder {
-    buffers: RawRenderBuffer<CommonVertex, u32>,
-    first_vertex: u32,
-    first_index: u32,
-    vertex_offset: u32,
-    color: Color,
-    pub white_pixel_uv: Point2D,
-    uv_rect: Option<(Point2D, Vector2D, Point2D, Size2D)>,
-}
+// pub struct ShapeGeometryBuilder {
+//     buffers: RawRenderBuffer<CommonVertex, u32>,
+//     data_buffer: Vec<CommonVertexData>,
+//     first_vertex: u32,
+//     first_index: u32,
+//     vertex_offset: u32,
+//     color: Color,
+//     pub white_pixel_uv: Point2D,
+//     uv_rect: Option<(Point2D, Vector2D, Point2D, Size2D)>,
+// }
 
-impl ShapeGeometryBuilder {
-    pub const fn new(buffers: RawRenderBuffer<CommonVertex, u32>, white_pixel_uv: Point2D, color: Color) -> Self {
-        let first_vertex = buffers.vertices.len() as u32;
-        let first_index = buffers.indices.len() as u32;
+// impl ShapeGeometryBuilder {
+//     pub const fn new(buffers: RawRenderBuffer<CommonVertex, u32>,
+// white_pixel_uv: Point2D, color: Color) -> Self {         let first_vertex =
+// buffers.vertices.len() as u32;         let first_index =
+// buffers.indices.len() as u32;
 
-        Self {
-            buffers,
-            first_vertex,
-            first_index,
-            vertex_offset: 0,
-            color,
-            white_pixel_uv,
-            uv_rect: None,
-        }
-    }
+//         Self {
+//             buffers,
+//             first_vertex,
+//             first_index,
+//             vertex_offset: 0,
+//             color,
+//             white_pixel_uv,
+//             uv_rect: None,
+//         }
+//     }
 
-    pub const fn set_uv_rect(&mut self, uv_rect: (Point2D, Vector2D, Point2D, Size2D)) {
-        self.uv_rect.replace(uv_rect);
-    }
+//     pub const fn set_uv_rect(&mut self, uv_rect: (Point2D, Vector2D, Point2D,
+// Size2D)) {         self.uv_rect.replace(uv_rect);
+//     }
 
-    pub const fn take_uv_rect(&mut self) {
-        self.uv_rect.take();
-    }
+//     pub const fn take_uv_rect(&mut self) {
+//         self.uv_rect.take();
+//     }
 
-    pub const fn set_color(&mut self, color: Color) {
-        self.color = color;
-    }
+//     pub const fn set_color(&mut self, color: Color) {
+//         self.color = color;
+//     }
 
-    pub const fn set_vertex_offsset(&mut self, offset: u32) {
-        self.vertex_offset = offset;
-    }
+//     pub const fn set_vertex_offsset(&mut self, offset: u32) {
+//         self.vertex_offset = offset;
+//     }
 
-    fn build(&mut self) -> RawRenderBuffer<CommonVertex, u32> {
-        let (num_vertices, num_indices) = (self.buffers.vertices.len(), self.buffers.indices.len());
+//     fn build(&mut self) -> RawRenderBuffer<CommonVertex, u32> {
+//         let (num_vertices, num_indices) = (self.buffers.vertices.len(),
+// self.buffers.indices.len());
 
-        self.vertex_offset = 0;
+//         self.vertex_offset = 0;
 
-        std::mem::replace(&mut self.buffers, RawRenderBuffer::with_capacity(num_vertices, num_indices))
-    }
-}
+//         std::mem::replace(&mut self.buffers,
+// RawRenderBuffer::with_capacity(num_vertices, num_indices))     }
+// }
 
-impl GeometryBuilder for ShapeGeometryBuilder {
-    fn begin_geometry(&mut self) {
-        self.first_vertex = self.buffers.vertices.len() as u32;
-        self.first_index = self.buffers.indices.len() as u32;
-    }
+// impl GeometryBuilder for ShapeGeometryBuilder {
+//     fn begin_geometry(&mut self) {
+//         self.first_vertex = self.buffers.vertices.len() as u32;
+//         self.first_index = self.buffers.indices.len() as u32;
+//     }
 
-    fn add_triangle(&mut self, a: VertexId, b: VertexId, c: VertexId) {
-        debug_assert_ne!(a, b);
-        debug_assert_ne!(a, c);
-        debug_assert_ne!(b, c);
-        debug_assert!(a != VertexId::INVALID);
-        debug_assert!(b != VertexId::INVALID);
-        debug_assert!(c != VertexId::INVALID);
+//     fn add_triangle(&mut self, a: VertexId, b: VertexId, c: VertexId) {
+//         debug_assert_ne!(a, b);
+//         debug_assert_ne!(a, c);
+//         debug_assert_ne!(b, c);
+//         debug_assert!(a != VertexId::INVALID);
+//         debug_assert!(b != VertexId::INVALID);
+//         debug_assert!(c != VertexId::INVALID);
 
-        self.buffers.indices.push((a + self.vertex_offset).into());
-        self.buffers.indices.push((b + self.vertex_offset).into());
-        self.buffers.indices.push((c + self.vertex_offset).into());
-    }
+//         self.buffers.indices.push((a + self.vertex_offset).into());
+//         self.buffers.indices.push((b + self.vertex_offset).into());
+//         self.buffers.indices.push((c + self.vertex_offset).into());
+//     }
 
-    fn abort_geometry(&mut self) {
-        self.buffers.vertices.truncate(self.first_vertex as usize);
-        self.buffers.indices.truncate(self.first_index as usize);
-    }
-}
+//     fn abort_geometry(&mut self) {
+//         self.buffers.vertices.truncate(self.first_vertex as usize);
+//         self.buffers.indices.truncate(self.first_index as usize);
+//     }
+// }
 
-impl FillGeometryBuilder for ShapeGeometryBuilder {
-    fn add_fill_vertex(&mut self, vertex: FillVertex) -> Result<VertexId, GeometryBuilderError> {
-        let position = Point2D::from_array(vertex.position().to_array());
+// impl FillGeometryBuilder for ShapeGeometryBuilder {
+//     fn add_fill_vertex(&mut self, vertex: FillVertex) -> Result<VertexId,
+// GeometryBuilderError> {         let position =
+// Point2D::from_array(vertex.position().to_array());
 
-        self.buffers.vertices.push(CommonVertex {
-            position: position.extend(0.0),
-            color: self.color.as_value(),
-            uv: if let Some((offset, uv_size, origin, size)) = self.uv_rect {
-                Point2D::new(
-                    uv_size.x.mul_add((position.x - origin.x) / size.x, offset.x),
-                    uv_size.y.mul_add((position.y - origin.y) / size.y, offset.y),
-                )
-            } else {
-                self.white_pixel_uv
-            },
-            clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
-            _pad: [0; 8],
-        });
+//         self.data_buffer.push(CommonVertexData {
+//             color: self.color.as_value(),
+//             half_size: (),
+//             radii: (),
+//             radii2: (),
+//             mode_pad: (),
+//         });
+//         self.buffers.vertices.push(CommonVertex {
+//             position,
+//             color: self.color.as_value(),
+//             uv: if let Some((offset, uv_size, origin, size)) = self.uv_rect {
+//                 Point2D::new(
+//                     uv_size.x.mul_add((position.x - origin.x) / size.x,
+// offset.x),                     uv_size.y.mul_add((position.y - origin.y) /
+// size.y, offset.y),                 )
+//             } else {
+//                 self.white_pixel_uv
+//             },
+//             clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+//             _pad: [0; 8],
+//         });
 
-        let len = self.buffers.vertices.len();
+//         let len = self.buffers.vertices.len();
 
-        if len > u32::MAX as usize {
-            return Err(GeometryBuilderError::TooManyVertices);
-        }
+//         if len > u32::MAX as usize {
+//             return Err(GeometryBuilderError::TooManyVertices);
+//         }
 
-        Ok(VertexId((len - 1) as u32))
-    }
-}
+//         Ok(VertexId((len - 1) as u32))
+//     }
+// }
 
-impl StrokeGeometryBuilder for ShapeGeometryBuilder {
-    fn add_stroke_vertex(&mut self, vertex: StrokeVertex) -> Result<VertexId, GeometryBuilderError> {
-        self.buffers.vertices.push(CommonVertex {
-            position: Point3D::from_array(vertex.position().extend(0.0).to_array()),
-            color: self.color.as_value(),
-            uv: self.white_pixel_uv,
-            clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
-            _pad: [0; 8],
-        });
+// impl StrokeGeometryBuilder for ShapeGeometryBuilder {
+//     fn add_stroke_vertex(&mut self, vertex: StrokeVertex) -> Result<VertexId,
+// GeometryBuilderError> {         self.buffers.vertices.push(CommonVertex {
+//             position:
+// Point3D::from_array(vertex.position().extend(0.0).to_array()),
+// color: self.color.as_value(),             uv: self.white_pixel_uv,
+//             clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+//             _pad: [0; 8],
+//         });
 
-        let len = self.buffers.vertices.len();
+//         let len = self.buffers.vertices.len();
 
-        if len > u32::MAX as usize {
-            return Err(GeometryBuilderError::TooManyVertices);
-        }
+//         if len > u32::MAX as usize {
+//             return Err(GeometryBuilderError::TooManyVertices);
+//         }
 
-        Ok(VertexId((len - 1) as u32))
-    }
-}
+//         Ok(VertexId((len - 1) as u32))
+//     }
+// }
 
-pub struct CommonTessellator {
-    pub builder: ShapeGeometryBuilder,
-    tessellator: FillTessellator,
-    options: FillOptions,
-}
+// pub struct CommonTessellator {
+//     pub builder: ShapeGeometryBuilder,
+//     tessellator: FillTessellator,
+//     options: FillOptions,
+// }
 
-impl CommonTessellator {
-    pub fn new(white_pixel_uv: Point2D) -> Self {
-        let builder = ShapeGeometryBuilder::new(RawRenderBuffer::new(), white_pixel_uv, Color::RED);
-        let tessellator = FillTessellator::new();
-        let options = FillOptions::default();
+// impl CommonTessellator {
+//     pub fn new(white_pixel_uv: Point2D) -> Self {
+//         let builder = ShapeGeometryBuilder::new(RawRenderBuffer::new(),
+// white_pixel_uv, Color::RED);         let tessellator =
+// FillTessellator::new();         let options = FillOptions::default();
 
-        Self { builder, tessellator, options }
-    }
+//         Self { builder, tessellator, options }
+//     }
 
-    pub const fn set_uv_rect(&mut self, uv_rect: (Point2D, Vector2D, Point2D, Size2D)) {
-        self.builder.set_uv_rect(uv_rect);
-    }
+//     pub const fn set_uv_rect(&mut self, uv_rect: (Point2D, Vector2D, Point2D,
+// Size2D)) {         self.builder.set_uv_rect(uv_rect);
+//     }
 
-    pub const fn take_uv_rect(&mut self) {
-        self.builder.take_uv_rect();
-    }
+//     pub const fn take_uv_rect(&mut self) {
+//         self.builder.take_uv_rect();
+//     }
 
-    const fn set_vertex_offsset(&mut self, offset: u32) {
-        self.builder.set_vertex_offsset(offset);
-    }
+//     const fn set_vertex_offsset(&mut self, offset: u32) {
+//         self.builder.set_vertex_offsset(offset);
+//     }
 
-    #[allow(dead_code)]
-    pub fn transformed_tessellate_with_color<F: FnOnce(&mut NoAttributes<Transformed<FillBuilder, Transform>>)>(
-        &mut self,
-        color: Color,
-        transform: Transform,
-        tessellate: F,
-    ) -> Result<(), TessellationError> {
-        self.builder.set_color(color);
+//     #[allow(dead_code)]
+//     pub fn transformed_tessellate_with_color<F: FnOnce(&mut
+// NoAttributes<Transformed<FillBuilder, Transform>>)>(         &mut self,
+//         color: Color,
+//         transform: Transform,
+//         tessellate: F,
+//     ) -> Result<(), TessellationError> {
+//         self.builder.set_color(color);
 
-        let mut builder = self.tessellator.builder(&self.options, &mut self.builder).transformed(transform);
+//         let mut builder = self.tessellator.builder(&self.options, &mut
+// self.builder).transformed(transform);
 
-        tessellate(&mut builder);
+//         tessellate(&mut builder);
 
-        builder.build()
-    }
+//         builder.build()
+//     }
 
-    pub fn tessellate_with_color<F: FnOnce(&mut NoAttributes<FillBuilder>)>(&mut self, color: Color, tessellate: F) -> Result<(), TessellationError> {
-        self.builder.set_color(color);
+//     pub fn tessellate_with_color<F: FnOnce(&mut
+// NoAttributes<FillBuilder>)>(&mut self, color: Color, tessellate: F) ->
+// Result<(), TessellationError> {         self.builder.set_color(color);
 
-        let mut builder = self.tessellator.builder(&self.options, &mut self.builder);
+//         let mut builder = self.tessellator.builder(&self.options, &mut
+// self.builder);
 
-        tessellate(&mut builder);
+//         tessellate(&mut builder);
 
-        builder.build()
-    }
+//         builder.build()
+//     }
 
-    pub fn build(&mut self) -> RawRenderBuffer<CommonVertex, u32> {
-        self.builder.build()
-    }
-}
+//     pub fn build(&mut self) -> RawRenderBuffer<CommonVertex, u32> {
+//         self.builder.build()
+//     }
+// }
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -308,11 +325,12 @@ pub enum ObjectFit {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GlyphKey(CacheKey, u32, u16);
 
-pub enum AtlasKey {
-    // Text(Option<GlyphRasterConfig>),
-    Image(PathBuf),
-    WhitePixel,
+impl GlyphKey {
+    const fn new(font: CacheKey, font_size: f32, glyph: u16) -> Self {
+        Self(font, font_size.to_bits(), glyph)
+    }
 }
 
 #[allow(dead_code)]
@@ -320,19 +338,18 @@ pub struct CommonRenderer {
     shader: Program,
     vbo: VertexBuffer<CommonVertex, ShapeShader>,
     ibo: IndexBuffer<u32>,
+    tbo: TextureBuffer<ShapeData>,
     texture: Texture2d,
-    atlas: TextureViewAtlas<AtlasKey>,
-
-    // SHAPE RENDERING
-    tessellator: CommonTessellator,
+    atlas: AtlasAllocator,
 
     // TEXT RENDERING
     font_name_map: HashMap<String, usize>,
-
+    glyph_map: HashMap<GlyphKey, (AllocId, ISize2D)>,
     fonts: Vec<OwnedFont>,
 
     // COMMON RENDERING
     pub(crate) buffers: RawRenderBuffer<CommonVertex, u32>,
+    shape_buffer: Vec<ShapeData>,
 
     // VERTICES TRANSFORMATION
     transform: Option<Transform3D>,
@@ -349,49 +366,32 @@ pub struct OwnedFont {
     pub key: CacheKey,
 }
 
-const TEXT_BASE_VERTICES: [(Point3D, Point2D); 4] = [
-    (Point3D::new(0.0, 1.0, 0.0), Point2D::new(0.0, 1.0)),
-    (Point3D::new(0.0, 0.0, 0.0), Point2D::new(0.0, 0.0)),
-    (Point3D::new(1.0, 1.0, 0.0), Point2D::new(1.0, 1.0)),
-    (Point3D::new(1.0, 0.0, 0.0), Point2D::new(1.0, 0.0)),
-];
-
 impl CommonRenderer {
     const PREALLOCATE_INDICES: usize = Self::PREALLOCATE_VERTICES * 2;
+    const PREALLOCATE_SHAPES: usize = 16 * 16 * 16;
     const PREALLOCATE_VERTICES: usize = 16 * 16 * 16 * 72;
 
     pub fn new(backend: &RenderBackend) -> Result<Self, Error> {
-        let mut atlas = TextureViewAtlas::new(4096).with_spacing(4);
-
-        let image = ImageBuffer::from_pixel(24, 24, image::Rgba([255, 255, 255, 255]));
-
-        let (offset, size, _) = atlas.append(AtlasKey::WhitePixel, &image);
-
+        let atlas = AtlasAllocator::new(euclid::Size2D::splat(4096));
         let texture = backend.create_empty_texture2d(4096, 4096)?;
-
-        texture.writable().write(
-            (offset.x * 4096.0) as u32,
-            (offset.y * 4096.0) as u32,
-            (size.x * 4096.0) as u32,
-            (size.y * 4096.0) as u32,
-            &[255u8; 24 * 24 * 4],
-        );
-
         let shader = backend.create_program(&ShapeShader)?;
         let vbo = backend.create_empty_vertex_buffer(Self::PREALLOCATE_VERTICES, &shader, true)?;
         let ibo = backend.create_empty_index_buffer(ElementType::Triangles, Self::PREALLOCATE_INDICES, true)?;
+        let tbo = backend.create_empty_texture_buffer(Self::PREALLOCATE_SHAPES, true)?;
 
         Ok(Self {
             shader,
             vbo,
             ibo,
+            tbo,
 
-            tessellator: CommonTessellator::new(offset + (size / 2.0)),
+            shape_buffer: Vec::new(),
 
             atlas,
             texture,
 
             font_name_map: HashMap::new(),
+            glyph_map: HashMap::new(),
             fonts: Vec::new(),
 
             buffers: RawRenderBuffer::new(),
@@ -410,10 +410,6 @@ impl CommonRenderer {
 
     pub const fn window_matrix(&self) -> Transform3D {
         self.window_matrix
-    }
-
-    pub const fn white_pixel_uv(&self) -> Point2D {
-        self.tessellator.builder.white_pixel_uv
     }
 
     pub const fn set_matrix(&mut self, matrix: Transform3D) {
@@ -488,450 +484,490 @@ impl CommonRenderer {
         })
     }
 
-    pub fn draw_round_image<P: AsRef<std::path::Path>>(
-        &mut self,
-        origin: Point2D,
-        size: Size2D,
-        corner_radius: Thickness,
-        path: P,
-    ) -> Result<(), image::ImageError> {
-        let path = path.as_ref();
-        let key = AtlasKey::Image(path.to_path_buf());
+    // pub fn draw_round_image<P: AsRef<std::path::Path>>(
+    //     &mut self,
+    //     origin: Point2D,
+    //     size: Size2D,
+    //     corner_radius: Thickness,
+    //     path: P,
+    // ) -> Result<(), image::ImageError> {
+    //     let path = path.as_ref();
+    //     let key = AtlasKey::Image(path.to_path_buf());
 
-        let (offset, uv_size) = if let Some((offset, size, _)) = self.atlas.get_texture_uv(&key) {
-            (offset, size)
-        } else {
-            let image = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
-            let image = image.to_rgba8();
-            let (_width, _height) = image.dimensions();
+    //     let (offset, uv_size) = if let Some((offset, size, _)) =
+    // self.atlas.get_texture_uv(&key) {         (offset, size)
+    //     } else {
+    //         let image =
+    // image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
+    //         let image = image.to_rgba8();
+    //         let (_width, _height) = image.dimensions();
 
-            let (offset, size, _) = self.atlas.append(key, &image);
+    //         let (offset, size, _) = self.atlas.append(key, &image);
 
-            self.texture.writable().write(
-                (offset.x * 4096.0).convert().unwrap(),
-                (offset.y * 4096.0).convert().unwrap(),
-                (size.x * 4096.0).convert().unwrap(),
-                (size.y * 4096.0).convert().unwrap(),
-                image.as_raw(), /* RawImage2d {
-                                 *     data: Cow::Owned(image.into_raw()),
-                                 *     width,
-                                 *     height,
-                                 *     format: ClientFormat::U8U8U8U8,
-                                 * }, */
-            );
+    //         self.texture.writable().write(
+    //             (offset.x * 4096.0).convert().unwrap(),
+    //             (offset.y * 4096.0).convert().unwrap(),
+    //             (size.x * 4096.0).convert().unwrap(),
+    //             (size.y * 4096.0).convert().unwrap(),
+    //             image.as_raw(),
+    //         );
 
-            (offset, size)
-        };
+    //         (offset, size)
+    //     };
 
-        self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
-        self.tessellator.set_uv_rect((offset, uv_size, origin, size));
-        self.tessellator
-            .tessellate_with_color(Color::WHITE, |builder| {
-                builder.add_rounded_rectangle(
-                    &bytemuck::cast(Rect::new(origin, size).to_box2d()),
-                    &BorderRadii {
-                        top_left: corner_radius.top_left(),
-                        top_right: corner_radius.top_right(),
-                        bottom_left: corner_radius.bottom_left(),
-                        bottom_right: corner_radius.bottom_right(),
-                    },
-                    Winding::Positive,
-                );
-            })
-            .unwrap();
+    //     self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
+    //     self.tessellator.set_uv_rect((offset, uv_size, origin, size));
+    //     self.tessellator
+    //         .tessellate_with_color(Color::WHITE, |builder| {
+    //             builder.add_rounded_rectangle(
+    //                 &bytemuck::cast(Rect::new(origin, size).to_box2d()),
+    //                 &BorderRadii {
+    //                     top_left: corner_radius.top_left(),
+    //                     top_right: corner_radius.top_right(),
+    //                     bottom_left: corner_radius.bottom_left(),
+    //                     bottom_right: corner_radius.bottom_right(),
+    //                 },
+    //                 Winding::Positive,
+    //             );
+    //         })
+    //         .unwrap();
 
-        self.tessellator.take_uv_rect();
+    //     self.tessellator.take_uv_rect();
 
-        let buffers = self.tessellator.build();
+    //     let buffers = self.tessellator.build();
 
-        self.buffers.vertices.extend(buffers.vertices.into_iter().map(|mut vertex| {
-            vertex.position = self
-                .transform
-                .as_ref()
-                .map_or(vertex.position, |transform| transform.transform_point3(vertex.position));
+    //     self.buffers.vertices.extend(buffers.vertices.into_iter().map(|mut
+    // vertex| {         vertex.position = self
+    //             .transform
+    //             .as_ref()
+    //             .map_or(vertex.position, |transform|
+    // transform.transform_point3(vertex.position));
 
-            vertex
-        }));
+    //         vertex
+    //     }));
 
-        self.buffers.indices.extend(buffers.indices);
+    //     self.buffers.indices.extend(buffers.indices);
 
-        Ok(())
+    //     Ok(())
+    // }
+
+    // pub fn draw_image<P: AsRef<std::path::Path>>(&mut self, origin: Point2D,
+    // size: Size2D, path: P, object_fit: ObjectFit) -> Result<(),
+    // image::ImageError> {     let path = path.as_ref();
+    //     let key = AtlasKey::Image(path.to_path_buf());
+    //     let resulting_scale = size / 4096.0;
+
+    //     let (offset, uv_size) = if let Some((offset, scale, _)) =
+    // self.atlas.get_texture_uv(&key) {         match object_fit {
+    //             ObjectFit::Stretch => (offset, scale),
+    //             ObjectFit::Cover => {
+    //                 let r = Size2D::new(resulting_scale.x / scale.x,
+    // resulting_scale.y / scale.y);                 let ratio =
+    // r.max_element();                 let scale = scale * ratio;
+    //                 let mut diff = Point2D::ZERO;
+
+    //                 if scale.x > resulting_scale.x {
+    //                     diff.x = scale.x - resulting_scale.x;
+    //                 }
+
+    //                 if scale.y > resulting_scale.y {
+    //                     diff.y = scale.y - resulting_scale.y;
+    //                 }
+
+    //                 (offset + diff / 2.0 / ratio, resulting_scale / ratio)
+    //             }
+    //         }
+    //     } else {
+    //         let image =
+    // image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
+    //         let image = image.to_rgba8();
+
+    //         let (offset, size, _) = self.atlas.append(key, &image);
+
+    //         self.texture.writable().write(
+    //             (offset.x * 4096.0).convert().unwrap(),
+    //             (offset.y * 4096.0).convert().unwrap(),
+    //             (size.x * 4096.0).convert().unwrap(),
+    //             (size.y * 4096.0).convert().unwrap(),
+    //             image.as_raw(),
+    //         );
+
+    //         match object_fit {
+    //             ObjectFit::Stretch => (offset, size),
+    //             ObjectFit::Cover => {
+    //                 let r = resulting_scale / size;
+    //                 let ratio = r.max_element();
+    //                 let scaled_size = size * ratio;
+    //                 let mut diff = Point2D::ZERO;
+
+    //                 if scaled_size.x > resulting_scale.x {
+    //                     diff.x = scaled_size.x - resulting_scale.x;
+    //                 }
+
+    //                 if scaled_size.y > resulting_scale.y {
+    //                     diff.y = scaled_size.y - resulting_scale.y;
+    //                 }
+
+    //                 (offset + diff / 2.0 / ratio, resulting_scale / ratio)
+    //             }
+    //         }
+    //     };
+
+    //     self.buffers.vertices.extend(TEXT_BASE_VERTICES.map(|(position, uv)| {
+    //         let mut position = (origin + Point2D::new(position.x * size.x,
+    // position.y * size.y)).extend(position.z);
+
+    //         if let Some(transform) = &self.transform {
+    //             position = transform.transform_point3(position);
+    //         }
+
+    //         CommonVertex {
+    //             position,
+    //             color: Color::WHITE.as_value(),
+    //             uv: offset + Point2D::new(uv.x * uv_size.x, uv.y * uv_size.y),
+    //             clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
+    //             _pad: [0; 8],
+    //         }
+    //     }));
+
+    //     self.buffers
+    //         .indices
+    //         .extend([0, 1, 2, 3, 2, 1].map(|index| (self.buffers.vertices.len() -
+    // TEXT_BASE_VERTICES.len()) as u32 + index));
+
+    //     Ok(())
+    // }
+
+    fn push_shape(&mut self, color: Color, half_size: Size2D, radii: Thickness, mode: u32) -> u32 {
+        let id = self.shape_buffer.len() as u32;
+
+        self.shape_buffer.push(ShapeData {
+            color: color.as_value(),
+            half_size: half_size.to_array(),
+            radii,
+            mode,
+            _pad: 0,
+        });
+
+        id
     }
 
-    pub fn draw_image<P: AsRef<std::path::Path>>(&mut self, origin: Point2D, size: Size2D, path: P, object_fit: ObjectFit) -> Result<(), image::ImageError> {
-        let path = path.as_ref();
-        let key = AtlasKey::Image(path.to_path_buf());
-        let resulting_scale = size / 4096.0;
+    fn push_quad(&mut self, positions: [Point2D; 4], local_uvs: [Point2D; 4], shape_id: u32) {
+        let base = self.buffers.vertices.len() as u32;
 
-        let (offset, uv_size) = if let Some((offset, scale, _)) = self.atlas.get_texture_uv(&key) {
-            match object_fit {
-                ObjectFit::Stretch => (offset, scale),
-                ObjectFit::Cover => {
-                    let r = Size2D::new(resulting_scale.x / scale.x, resulting_scale.y / scale.y);
-                    let ratio = r.max_element();
-                    let scale = scale * ratio;
-                    let mut diff = Point2D::ZERO;
-
-                    if scale.x > resulting_scale.x {
-                        diff.x = scale.x - resulting_scale.x;
-                    }
-
-                    if scale.y > resulting_scale.y {
-                        diff.y = scale.y - resulting_scale.y;
-                    }
-
-                    (offset + diff / 2.0 / ratio, resulting_scale / ratio)
-                }
-            }
-        } else {
-            let image = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
-            let image = image.to_rgba8();
-
-            let (offset, size, _) = self.atlas.append(key, &image);
-
-            self.texture.writable().write(
-                (offset.x * 4096.0).convert().unwrap(),
-                (offset.y * 4096.0).convert().unwrap(),
-                (size.x * 4096.0).convert().unwrap(),
-                (size.y * 4096.0).convert().unwrap(),
-                image.as_raw(),
-            );
-
-            match object_fit {
-                ObjectFit::Stretch => (offset, size),
-                ObjectFit::Cover => {
-                    let r = resulting_scale / size;
-                    let ratio = r.max_element();
-                    let scaled_size = size * ratio;
-                    let mut diff = Point2D::ZERO;
-
-                    if scaled_size.x > resulting_scale.x {
-                        diff.x = scaled_size.x - resulting_scale.x;
-                    }
-
-                    if scaled_size.y > resulting_scale.y {
-                        diff.y = scaled_size.y - resulting_scale.y;
-                    }
-
-                    (offset + diff / 2.0 / ratio, resulting_scale / ratio)
-                }
-            }
-        };
-
-        self.buffers.vertices.extend(TEXT_BASE_VERTICES.map(|(position, uv)| {
-            let mut position = (origin + Point2D::new(position.x * size.x, position.y * size.y)).extend(position.z);
-
-            if let Some(transform) = &self.transform {
-                position = transform.transform_point3(position);
-            }
-
-            CommonVertex {
-                position,
-                color: Color::WHITE.as_value(),
-                uv: offset + Point2D::new(uv.x * uv_size.x, uv.y * uv_size.y),
-                clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
-                _pad: [0; 8],
-            }
+        self.buffers.vertices.extend((0..4).map(|i| CommonVertex {
+            position: positions[i],
+            local_uv: local_uvs[i],
+            shape_id,
         }));
+
+        self.buffers.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    #[allow(dead_code)]
+    pub fn draw_circle(&mut self, origin: Point2D, radius: f32, color: Color) {
+        self.draw_round_rect(origin, Size2D::splat(radius * 2.0), Thickness::all(radius), color);
+    }
+
+    pub fn draw_rect(&mut self, origin: Point2D, size: Size2D, color: Color) {
+        self.draw_round_rect(origin, size, Thickness::default(), color);
+    }
+
+    pub fn draw_round_rect(&mut self, origin: Point2D, size: Size2D, radii: Thickness, color: Color) {
+        let h = size * 0.5;
+        let c = origin + h;
+
+        let shape_id = self.push_shape(color, h, radii, 0);
+
+        self.push_quad(
+            [c - h, c + h.with_y(-h.y), c + h, c - h.with_y(-h.y)],
+            [-h, h.with_y(-h.y), h, h.with_x(-h.x)],
+            shape_id,
+        );
+    }
+
+    // pub fn draw_image_path<P: AsRef<std::path::Path>>(&mut self, path: Path,
+    // image_path: P) -> Result<(), image::ImageError> {     let image_path =
+    // image_path.as_ref();     let key =
+    // AtlasKey::Image(image_path.to_path_buf());
+
+    //     let (offset, uv_size) = if let Some((offset, size, _)) =
+    // self.atlas.get_texture_uv(&key) {         (offset, size)
+    //     } else {
+    //         let image =
+    // image::ImageReader::open(image_path)?.with_guessed_format()?.decode()?;
+    //         let image = image.to_rgba8();
+    //         let (_width, _height) = image.dimensions();
+
+    //         let (offset, size, _) = self.atlas.append(key, &image);
+
+    //         self.texture.writable().write(
+    //             (offset.x * 4096.0).convert().unwrap(),
+    //             (offset.y * 4096.0).convert().unwrap(),
+    //             (size.x * 4096.0).convert().unwrap(),
+    //             (size.y * 4096.0).convert().unwrap(),
+    //             image.as_raw(),
+    //             // RawImage2d {
+    //             //     data: Cow::Owned(image.into_raw()),
+    //             //     width,
+    //             //     height,
+    //             //     format: ClientFormat::U8U8U8U8,
+    //             // },
+    //         );
+
+    //         (offset, size)
+    //     };
+
+    //     let [mut min, mut max] = [Point2D::ZERO; 2];
+
+    //     for op in &path.ops {
+    //         match op {
+    //             &Op::Circle { origin, radius } => {
+    //                 min = min.min(origin - radius / 2.0);
+    //                 max = max.min(origin + radius / 2.0);
+    //             }
+    //             Op::Rect(rect) => {
+    //                 min = min.min(rect.origin);
+    //                 max = max.max(rect.origin + rect.size);
+    //             }
+    //             Op::RoundRect(rrect) => {
+    //                 min = min.min(rrect.origin);
+    //                 max = max.max(rrect.origin + rrect.size);
+    //             }
+    //             &Op::Begin(at) => {
+    //                 min = min.min(at);
+    //                 max = max.max(at);
+    //             }
+    //             &Op::LineTo(to) => {
+    //                 min = min.min(to);
+    //                 max = max.max(to);
+    //             }
+    //             &Op::CubicBezierTo(ctrl1, ctrl2, to) => {
+    //                 min = min.min(ctrl1).min(ctrl2).min(to);
+    //                 max = max.max(ctrl1).max(ctrl2).max(to);
+    //             }
+    //             Op::Close => {}
+    //         }
+    //     }
+
+    //     let origin = min;
+    //     let size = max - min;
+
+    //     self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
+    //     self.tessellator.set_uv_rect((offset, uv_size, origin, size));
+    //     self.tessellator
+    //         .tessellate_with_color(Color::WHITE, |builder| {
+    //             for op in path.ops {
+    //                 match op {
+    //                     Op::Circle { origin, radius } =>
+    // builder.add_circle(bytemuck::cast(origin), radius, Winding::Positive),
+    //                     Op::Rect(rect) =>
+    // builder.add_rectangle(&bytemuck::cast(rect.to_box2d()), Winding::Positive),
+    //                     Op::RoundRect(rrect) => builder.add_rounded_rectangle(
+    //                         &bytemuck::cast(rrect.as_box()),
+    //                         &BorderRadii {
+    //                             top_left: rrect.corner_radius.top_left(),
+    //                             top_right: rrect.corner_radius.top_right(),
+    //                             bottom_left: rrect.corner_radius.bottom_left(),
+    //                             bottom_right: rrect.corner_radius.bottom_right(),
+    //                         },
+    //                         Winding::Positive,
+    //                     ),
+    //                     Op::Begin(at) => {
+    //                         builder.begin(bytemuck::cast(at));
+    //                     }
+    //                     Op::LineTo(to) => {
+    //                         builder.line_to(bytemuck::cast(to));
+    //                     }
+    //                     Op::CubicBezierTo(ctrl1, ctrl2, to) => {
+    //                         builder.cubic_bezier_to(bytemuck::cast(ctrl1),
+    // bytemuck::cast(ctrl2), bytemuck::cast(to));                     }
+    //                     Op::Close => builder.close(),
+    //                 }
+    //             }
+    //         })
+    //         .unwrap();
+
+    //     self.tessellator.take_uv_rect();
+
+    //     let buffers = self.tessellator.build();
+
+    //     self.buffers.vertices.extend(buffers.vertices.into_iter().map(|mut
+    // vertex| {         vertex.position = self
+    //             .transform
+    //             .as_ref()
+    //             .map_or(vertex.position, |transform|
+    // transform.transform_point3(vertex.position));
+
+    //         vertex
+    //     }));
+
+    //     self.buffers.indices.extend(buffers.indices);
+    //     Ok(())
+    // }
+
+    // #[allow(dead_code)]
+    // pub fn draw_path(&mut self, path: Path, color: Color) -> Result<(),
+    // TessellationError> {     self.draw_shape(
+    //         |builder| {
+    //             for op in path.ops {
+    //                 match op {
+    //                     Op::Circle { origin, radius } =>
+    // builder.add_circle(bytemuck::cast(origin), radius, Winding::Positive),
+    //                     Op::Rect(rect) =>
+    // builder.add_rectangle(&bytemuck::cast(rect.to_box2d()), Winding::Positive),
+    //                     Op::RoundRect(rrect) => builder.add_rounded_rectangle(
+    //                         &bytemuck::cast(rrect.as_box()),
+    //                         &BorderRadii {
+    //                             top_left: rrect.corner_radius.top_left(),
+    //                             top_right: rrect.corner_radius.top_right(),
+    //                             bottom_left: rrect.corner_radius.bottom_left(),
+    //                             bottom_right: rrect.corner_radius.bottom_right(),
+    //                         },
+    //                         Winding::Positive,
+    //                     ),
+    //                     Op::Begin(at) => {
+    //                         builder.begin(bytemuck::cast(at));
+    //                     }
+    //                     Op::LineTo(to) => {
+    //                         builder.line_to(bytemuck::cast(to));
+    //                     }
+    //                     Op::CubicBezierTo(ctrl1, ctrl2, to) => {
+    //                         builder.cubic_bezier_to(bytemuck::cast(ctrl1),
+    // bytemuck::cast(ctrl2), bytemuck::cast(to));                     }
+    //                     Op::Close => builder.close(),
+    //                 }
+    //             }
+    //         },
+    //         color,
+    //     )
+    // }
+
+    #[allow(dead_code)]
+    pub fn push_lyon_path(&mut self, path: &lyon_tessellation::path::Path, color: Color) {
+        let mut geom: VertexBuffers<euclid::default::Point2D<f32>, u16> = VertexBuffers::new();
+
+        FillTessellator::new()
+            .tessellate_path(path, &FillOptions::default(), &mut simple_builder(&mut geom))
+            .expect("tessellation failed");
+
+        let shape_id = self.push_shape(color, Size2D::ZERO, Thickness::default(), 2);
+        let base = self.buffers.vertices.len() as u32;
 
         self.buffers
-            .indices
-            .extend([0, 1, 2, 3, 2, 1].map(|index| (self.buffers.vertices.len() - TEXT_BASE_VERTICES.len()) as u32 + index));
+            .vertices
+            .extend(bytemuck::cast_vec(geom.vertices).into_iter().map(|position| CommonVertex {
+                position,
+                local_uv: Point2D::ZERO,
+                shape_id,
+            }));
 
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn draw_circle(&mut self, origin: Point2D, radius: f32, color: Color) -> Result<(), TessellationError> {
-        self.draw_shape(|builder| builder.add_circle(bytemuck::cast(origin), radius, Winding::Positive), color)
-    }
-
-    pub fn draw_rect(&mut self, origin: Point2D, size: Size2D, color: Color) -> Result<(), TessellationError> {
-        self.draw_shape(
-            |builder| builder.add_rectangle(&bytemuck::cast(Rect::new(origin, size).to_box2d()), Winding::Positive),
-            color,
-        )
-    }
-
-    pub fn draw_round_rect(&mut self, origin: Point2D, size: Size2D, corner_radius: Thickness, color: Color) -> Result<(), TessellationError> {
-        self.draw_shape(
-            |builder| {
-                builder.add_rounded_rectangle(
-                    &bytemuck::cast(Rect::new(origin, size).to_box2d()),
-                    &BorderRadii {
-                        top_left: corner_radius.top_left(),
-                        top_right: corner_radius.top_right(),
-                        bottom_left: corner_radius.bottom_left(),
-                        bottom_right: corner_radius.bottom_right(),
-                    },
-                    Winding::Positive,
-                );
-            },
-            color,
-        )
-    }
-
-    pub fn draw_image_path<P: AsRef<std::path::Path>>(&mut self, path: Path, image_path: P) -> Result<(), image::ImageError> {
-        let image_path = image_path.as_ref();
-        let key = AtlasKey::Image(image_path.to_path_buf());
-
-        let (offset, uv_size) = if let Some((offset, size, _)) = self.atlas.get_texture_uv(&key) {
-            (offset, size)
-        } else {
-            let image = image::ImageReader::open(image_path)?.with_guessed_format()?.decode()?;
-            let image = image.to_rgba8();
-            let (_width, _height) = image.dimensions();
-
-            let (offset, size, _) = self.atlas.append(key, &image);
-
-            self.texture.writable().write(
-                (offset.x * 4096.0).convert().unwrap(),
-                (offset.y * 4096.0).convert().unwrap(),
-                (size.x * 4096.0).convert().unwrap(),
-                (size.y * 4096.0).convert().unwrap(),
-                image.as_raw(),
-                // RawImage2d {
-                //     data: Cow::Owned(image.into_raw()),
-                //     width,
-                //     height,
-                //     format: ClientFormat::U8U8U8U8,
-                // },
-            );
-
-            (offset, size)
-        };
-
-        let [mut min, mut max] = [Point2D::ZERO; 2];
-
-        for op in &path.ops {
-            match op {
-                &Op::Circle { origin, radius } => {
-                    min = min.min(origin - radius / 2.0);
-                    max = max.min(origin + radius / 2.0);
-                }
-                Op::Rect(rect) => {
-                    min = min.min(rect.origin);
-                    max = max.max(rect.origin + rect.size);
-                }
-                Op::RoundRect(rrect) => {
-                    min = min.min(rrect.origin);
-                    max = max.max(rrect.origin + rrect.size);
-                }
-                &Op::Begin(at) => {
-                    min = min.min(at);
-                    max = max.max(at);
-                }
-                &Op::LineTo(to) => {
-                    min = min.min(to);
-                    max = max.max(to);
-                }
-                &Op::CubicBezierTo(ctrl1, ctrl2, to) => {
-                    min = min.min(ctrl1).min(ctrl2).min(to);
-                    max = max.max(ctrl1).max(ctrl2).max(to);
-                }
-                Op::Close => {}
-            }
+        for i in geom.indices {
+            self.buffers.indices.push(base + u32::from(i));
         }
-
-        let origin = min;
-        let size = max - min;
-
-        self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
-        self.tessellator.set_uv_rect((offset, uv_size, origin, size));
-        self.tessellator
-            .tessellate_with_color(Color::WHITE, |builder| {
-                for op in path.ops {
-                    match op {
-                        Op::Circle { origin, radius } => builder.add_circle(bytemuck::cast(origin), radius, Winding::Positive),
-                        Op::Rect(rect) => builder.add_rectangle(&bytemuck::cast(rect.to_box2d()), Winding::Positive),
-                        Op::RoundRect(rrect) => builder.add_rounded_rectangle(
-                            &bytemuck::cast(rrect.as_box()),
-                            &BorderRadii {
-                                top_left: rrect.corner_radius.top_left(),
-                                top_right: rrect.corner_radius.top_right(),
-                                bottom_left: rrect.corner_radius.bottom_left(),
-                                bottom_right: rrect.corner_radius.bottom_right(),
-                            },
-                            Winding::Positive,
-                        ),
-                        Op::Begin(at) => {
-                            builder.begin(bytemuck::cast(at));
-                        }
-                        Op::LineTo(to) => {
-                            builder.line_to(bytemuck::cast(to));
-                        }
-                        Op::CubicBezierTo(ctrl1, ctrl2, to) => {
-                            builder.cubic_bezier_to(bytemuck::cast(ctrl1), bytemuck::cast(ctrl2), bytemuck::cast(to));
-                        }
-                        Op::Close => builder.close(),
-                    }
-                }
-            })
-            .unwrap();
-
-        self.tessellator.take_uv_rect();
-
-        let buffers = self.tessellator.build();
-
-        self.buffers.vertices.extend(buffers.vertices.into_iter().map(|mut vertex| {
-            vertex.position = self
-                .transform
-                .as_ref()
-                .map_or(vertex.position, |transform| transform.transform_point3(vertex.position));
-
-            vertex
-        }));
-
-        self.buffers.indices.extend(buffers.indices);
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn draw_path(&mut self, path: Path, color: Color) -> Result<(), TessellationError> {
-        self.draw_shape(
-            |builder| {
-                for op in path.ops {
-                    match op {
-                        Op::Circle { origin, radius } => builder.add_circle(bytemuck::cast(origin), radius, Winding::Positive),
-                        Op::Rect(rect) => builder.add_rectangle(&bytemuck::cast(rect.to_box2d()), Winding::Positive),
-                        Op::RoundRect(rrect) => builder.add_rounded_rectangle(
-                            &bytemuck::cast(rrect.as_box()),
-                            &BorderRadii {
-                                top_left: rrect.corner_radius.top_left(),
-                                top_right: rrect.corner_radius.top_right(),
-                                bottom_left: rrect.corner_radius.bottom_left(),
-                                bottom_right: rrect.corner_radius.bottom_right(),
-                            },
-                            Winding::Positive,
-                        ),
-                        Op::Begin(at) => {
-                            builder.begin(bytemuck::cast(at));
-                        }
-                        Op::LineTo(to) => {
-                            builder.line_to(bytemuck::cast(to));
-                        }
-                        Op::CubicBezierTo(ctrl1, ctrl2, to) => {
-                            builder.cubic_bezier_to(bytemuck::cast(ctrl1), bytemuck::cast(ctrl2), bytemuck::cast(to));
-                        }
-                        Op::Close => builder.close(),
-                    }
-                }
-            },
-            color,
-        )
-    }
-
-    pub fn draw_shape<F: FnOnce(&mut NoAttributes<FillBuilder>)>(&mut self, tessellate: F, color: Color) -> Result<(), TessellationError> {
-        self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
-        self.tessellator.tessellate_with_color(color, tessellate)?;
-
-        let buffers = self.tessellator.build();
-
-        self.buffers.vertices.extend(buffers.vertices.into_iter().map(|mut vertex| {
-            vertex.position = self
-                .transform
-                .as_ref()
-                .map_or(vertex.position, |transform| transform.transform_point3(vertex.position));
-
-            if let Some(clip) = self.clip {
-                vertex.clip = Vector4D::new(clip.0.x, clip.0.y, clip.1.x, clip.1.y);
-            }
-
-            vertex
-        }));
-
-        self.buffers.indices.extend(buffers.indices);
-
-        Ok(())
     }
 
     pub fn draw_text<F: AsRef<str>, T: AsRef<str>>(&mut self, origin: Point2D, font: F, text: T, color: Color, font_size: f32, _max_width: Option<f32>) {
-        use swash::{FontRef, scale::ScaleContext};
-
-        self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
-
         if let Some(font_index) = self.font_name_map.get(font.as_ref()).copied() {
-            use swash::shape::ShapeContext;
-
             let text = text.as_ref();
 
             let OwnedFont { data, offset, key, .. } = &self.fonts[font_index];
-            let font_ref = FontRef {
-                data,
-                offset: *offset,
-                key: *key,
-            };
+            let key = *key;
+            let font_ref = FontRef { data, offset: *offset, key };
 
             let mut shape_context = ShapeContext::new();
             let mut scale_context = ScaleContext::new();
             let mut scaler = scale_context.builder(font_ref).hint(true).size(font_size).build();
             let mut shaper = shape_context.builder(font_ref).size(font_size).build();
-            let _metrics = font_ref.glyph_metrics(&[]).scale(font_size);
 
             shaper.add_str(text);
 
-            self.tessellator
-                .tessellate_with_color(color, |b| {
-                    let mut x = origin.x;
-                    let mut y = origin.y + font_size;
+            let mut x = origin.x;
+            let mut y = origin.y + font_size;
 
-                    shaper.shape_with(|cluster| {
-                        use swash::text::cluster::Whitespace;
+            shaper.shape_with(|cluster| {
+                if matches!(cluster.info.whitespace(), Whitespace::Newline) {
+                    x = origin.x;
+                    y += font_size;
+                }
 
-                        if matches!(cluster.info.whitespace(), Whitespace::Newline) {
-                            x = origin.x;
-                            y += font_size;
-                        }
+                for glyph in cluster.glyphs {
+                    if !cluster.info.is_whitespace() {
+                        let key = GlyphKey::new(key, font_size, glyph.id);
+                        let (rect, offset) = match self.glyph_map.entry(key) {
+                            Entry::Occupied(entry) => {
+                                let (alloc, offset) = *entry.get();
 
-                        for glyph in cluster.glyphs {
-                            if let Some(mut outline) = scaler.scale_outline(glyph.id) {
-                                use swash::zeno::{PathData, Transform};
-
-                                outline.transform(&Transform::scale(1.0, -1.0).then_translate(x, y));
-
-                                for command in outline.path().commands() {
-                                    match command {
-                                        swash::zeno::Command::MoveTo(vector) => {
-                                            b.begin(euclid::Point2D::new(vector.x, vector.y));
-                                        }
-                                        swash::zeno::Command::LineTo(vector) => {
-                                            b.line_to(euclid::Point2D::new(vector.x, vector.y));
-                                        }
-                                        swash::zeno::Command::CurveTo(vector, vector1, vector2) => {
-                                            b.cubic_bezier_to(
-                                                euclid::Point2D::new(vector.x, vector.y),
-                                                euclid::Point2D::new(vector1.x, vector1.y),
-                                                euclid::Point2D::new(vector2.x, vector2.y),
-                                            );
-                                        }
-                                        swash::zeno::Command::QuadTo(vector, vector1) => {
-                                            b.quadratic_bezier_to(euclid::Point2D::new(vector.x, vector.y), euclid::Point2D::new(vector1.x, vector1.y));
-                                        }
-                                        swash::zeno::Command::Close => {
-                                            b.close();
-                                        }
-                                    }
-                                }
+                                (self.atlas.get(alloc), offset)
                             }
+                            Entry::Vacant(entry) => {
+                                let image = Render::new(&[Source::ColorOutline(0), Source::ColorBitmap(StrikeWith::BestFit), Source::Outline])
+                                    .format(Format::Alpha)
+                                    .offset(Vector::new(glyph.x, glyph.y))
+                                    .render(&mut scaler, glyph.id)
+                                    .unwrap();
 
-                            x += cluster.advance();
-                        }
-                    });
-                })
-                .unwrap();
+                                let alloc = self
+                                    .atlas
+                                    .allocate(etagere::size2(image.placement.width.cast_signed(), image.placement.height.cast_signed()))
+                                    .unwrap();
 
-            let buffers = self.tessellator.build();
+                                let buffer = image::GrayImage::from_raw(image.placement.width, image.placement.height, image.data).unwrap();
+                                let offset = ISize2D::new(image.placement.left, image.placement.top);
 
-            self.buffers.vertices.extend(buffers.vertices.into_iter().map(|mut vertex| {
-                vertex.position = self
-                    .transform
-                    .as_ref()
-                    .map_or(vertex.position, |transform| transform.transform_point3(vertex.position));
+                                entry.insert((alloc.id, offset));
 
-                vertex
-            }));
+                                let buffer = image::DynamicImage::ImageLuma8(buffer);
+                                let buffer = buffer.to_rgba8().into_raw();
 
-            self.buffers.indices.extend(buffers.indices);
+                                self.texture.writable().write(
+                                    alloc.rectangle.min.x.cast_unsigned(),
+                                    alloc.rectangle.min.y.cast_unsigned(),
+                                    image.placement.width,
+                                    image.placement.height,
+                                    &buffer,
+                                );
+
+                                (alloc.rectangle, offset)
+                            }
+                        };
+
+                        let shape_id = self.shape_buffer.len() as u32;
+
+                        self.shape_buffer.push(ShapeData {
+                            color: color.as_value(),
+                            half_size: Size2D::ZERO.to_array(),
+                            radii: Thickness::default(),
+                            mode: 1,
+                            _pad: 0,
+                        });
+
+                        let atlas_size = self.atlas.size();
+                        let u0 = rect.min.x as f32 / atlas_size.width as f32;
+                        let v0 = rect.min.y as f32 / atlas_size.height as f32;
+                        let u1 = rect.max.x as f32 / atlas_size.width as f32;
+                        let v1 = rect.max.y as f32 / atlas_size.height as f32;
+
+                        let base = self.buffers.vertices.len() as u32;
+
+                        self.buffers.vertices.extend(
+                            [
+                                Point2D::new(x + offset.x as f32, y - offset.y as f32),
+                                Point2D::new(x + offset.x as f32, y - offset.y as f32) + Point2D::new(rect.width() as f32, 0.0),
+                                Point2D::new(x + offset.x as f32, y - offset.y as f32) + Point2D::new(rect.width() as f32, rect.height() as f32),
+                                Point2D::new(x + offset.x as f32, y - offset.y as f32) + Point2D::new(0.0, rect.height() as f32),
+                            ]
+                            .into_iter()
+                            .zip([Point2D::new(u0, v0), Point2D::new(u1, v0), Point2D::new(u1, v1), Point2D::new(u0, v1)])
+                            .map(|(position, local_uv)| CommonVertex { position, local_uv, shape_id }),
+                        );
+
+                        self.buffers.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+                    }
+
+                    x += cluster.advance();
+                }
+            });
         }
     }
 
@@ -973,12 +1009,15 @@ impl CommonRenderer {
 
         self.vbo.dynamic_write(&self.buffers.vertices);
         self.ibo.dynamic_write(&self.buffers.indices);
+        self.tbo.dynamic_write(&self.shape_buffer);
 
         self.buffers.clear();
+        self.shape_buffer.clear();
 
         self.shader
             .bind()
             .with_uniform("atlas", &self.texture)
+            .with_uniform("shape_data", &self.tbo)
             .with_uniform("resolution", size.as_vec2().to_array())
             .with_uniform("matrix", matrix);
 

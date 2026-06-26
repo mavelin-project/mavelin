@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 
-use ahash::HashMap;
 use meralus_shared::{Face, IPoint2D, USizePoint3D};
 
 use crate::{BlockSource, CHUNK_HEIGHT, Chunk, ChunkAccess, SubChunk};
@@ -10,73 +9,60 @@ pub struct LightNode(pub USizePoint3D, pub IPoint2D);
 
 pub struct BfsLight<'a, C: ChunkAccess> {
     pub chunk_manager: &'a mut C,
-    pub block_addition_queue: VecDeque<LightNode>,
-    pub block_removing_queue: Vec<(LightNode, u8)>,
-    pub sky_addition_queue: VecDeque<LightNode>,
-    pub sky_removing_queue: Vec<(LightNode, u8)>,
-    props_cache: HashMap<String, (bool, u8)>,
+    pub block_addition_queue: VecDeque<(LightNode, u8)>,
+    pub block_removing_queue: VecDeque<(LightNode, u8)>,
+    pub sky_addition_queue: VecDeque<(LightNode, u8)>,
+    pub sky_removing_queue: VecDeque<(LightNode, u8)>,
 }
 
 impl<'a, C: ChunkAccess> BfsLight<'a, C> {
     #[must_use]
-    pub fn new(chunk_manager: &'a mut C) -> Self {
+    pub const fn new(chunk_manager: &'a mut C) -> Self {
         Self {
             chunk_manager,
             block_addition_queue: VecDeque::new(),
-            block_removing_queue: Vec::new(),
+            block_removing_queue: VecDeque::new(),
             sky_addition_queue: VecDeque::new(),
-            sky_removing_queue: Vec::new(),
-            props_cache: HashMap::default(),
+            sky_removing_queue: VecDeque::new(),
         }
-    }
-
-    #[inline]
-    fn get_props<T: BlockSource>(cache: &mut HashMap<String, (bool, u8)>, block_source: &T, name: &str) -> (bool, u8) {
-        if let Some(&props) = cache.get(name) {
-            return props;
-        }
-
-        let props = (block_source.blocks_light(name), block_source.light_consumption(name));
-
-        cache.insert(name.to_string(), props);
-
-        props
     }
 
     pub fn add_block(&mut self, node: LightNode) {
-        self.block_addition_queue.push_back(node);
+        self.block_addition_queue
+            .push_back((node, self.chunk_manager.get_local_block_light(node.1, node.0)));
     }
 
     pub fn add_block_custom(&mut self, node: LightNode, light_level: u8) {
         self.chunk_manager.set_local_block_light(node.1, node.0, light_level);
-        self.block_addition_queue.push_back(node);
+        self.block_addition_queue.push_back((node, light_level));
     }
 
     pub fn remove_block(&mut self, node: LightNode) {
         let light_level = self.chunk_manager.get_local_block_light(node.1, node.0);
 
-        self.block_removing_queue.push((node, light_level));
+        self.block_removing_queue.push_back((node, light_level));
         self.chunk_manager.set_local_block_light(node.1, node.0, 0);
     }
 
     pub fn add_sky(&mut self, node: LightNode) {
-        self.sky_addition_queue.push_back(node);
+        self.sky_addition_queue
+            .push_back((node, self.chunk_manager.get_local_sky_light(node.1, node.0)));
     }
 
     pub fn add_sky_custom(&mut self, node: LightNode, light_level: u8) {
         self.chunk_manager.set_local_sky_light(node.1, node.0, light_level);
-        self.sky_addition_queue.push_back(node);
+        self.sky_addition_queue.push_back((node, light_level));
     }
 
     pub fn remove_sky(&mut self, node: LightNode) {
         let light_level = self.chunk_manager.get_local_sky_light(node.1, node.0);
 
-        self.sky_removing_queue.push((node, light_level));
+        self.sky_removing_queue.push_back((node, light_level));
         self.chunk_manager.set_local_sky_light(node.1, node.0, if node.0.y == 255 { 15 } else { 0 });
     }
 
     pub fn calculate_block_light<T: BlockSource>(&mut self, block_source: &T) {
-        while let Some((node, node_light_level)) = self.block_removing_queue.pop() {
+        while let Some((node, node_light_level)) = self.block_removing_queue.pop_front() {
             let world_position = Chunk::to_world_pos(node.1, node.0);
 
             for face in [Face::Left, Face::Right, Face::Back, Face::Front, Face::Bottom, Face::Top] {
@@ -92,18 +78,19 @@ impl<'a, C: ChunkAccess> BfsLight<'a, C> {
                             chunk.dirty = true;
                             chunk.set_block_light(local_position, 0);
 
-                            self.block_removing_queue.push((LightNode(local_position, chunk.origin), neighbour_light_level));
+                            self.block_removing_queue
+                                .push_back((LightNode(local_position, chunk.origin), neighbour_light_level));
                         } else if neighbour_light_level >= node_light_level {
-                            self.block_addition_queue.push_back(LightNode(local_position, chunk.origin));
+                            self.block_addition_queue
+                                .push_back((LightNode(local_position, chunk.origin), neighbour_light_level));
                         }
                     }
                 }
             }
         }
 
-        while let Some(node) = self.block_addition_queue.pop_front() {
+        while let Some((node, light_level)) = self.block_addition_queue.pop_front() {
             let world_position = Chunk::to_world_pos(node.1, node.0);
-            let light_level = self.chunk_manager.get_local_block_light(node.1, node.0);
 
             for face in [Face::Left, Face::Right, Face::Back, Face::Front, Face::Bottom, Face::Top] {
                 let (chunk, position) = Chunk::to_origin_and_local(world_position + face.as_normal());
@@ -113,15 +100,17 @@ impl<'a, C: ChunkAccess> BfsLight<'a, C> {
                         continue;
                     }
 
-                    let block = chunk.get_block_unchecked(position);
+                    let [subchunk, y] = Chunk::get_subchunk_index(position.y);
+                    let index = SubChunk::index_of(position.with_y(y));
+                    let block = chunk.get_block_by_idx_unchecked(subchunk, index);
 
-                    if !block_source.blocks_light(&block.name) && chunk.get_block_light(position) + 2 <= light_level {
-                        let light_consumed = block_source.light_consumption(&block.name);
+                    if !block_source.blocks_light(block.id) && chunk.get_block_light(position) + 2 <= light_level {
+                        let light_level = light_level - block_source.light_consumption(block.id);
 
                         chunk.dirty = true;
-                        chunk.set_block_light(position, light_level - light_consumed);
+                        chunk.set_block_light_by_idx(subchunk, index, light_level);
 
-                        self.block_addition_queue.push_back(LightNode(position, chunk.origin));
+                        self.block_addition_queue.push_back((LightNode(position, chunk.origin), light_level));
                     }
                 }
             }
@@ -129,7 +118,7 @@ impl<'a, C: ChunkAccess> BfsLight<'a, C> {
     }
 
     pub fn calculate_sky_light<T: BlockSource>(&mut self, block_source: &T) {
-        while let Some((node, node_light_level)) = self.sky_removing_queue.pop() {
+        while let Some((node, node_light_level)) = self.sky_removing_queue.pop_front() {
             let world_position = Chunk::to_world_pos(node.1, node.0);
 
             for face in [Face::Left, Face::Right, Face::Back, Face::Front, Face::Bottom, Face::Top] {
@@ -145,18 +134,19 @@ impl<'a, C: ChunkAccess> BfsLight<'a, C> {
                             chunk.dirty = true;
                             chunk.set_sky_light(local_position, 0);
 
-                            self.sky_removing_queue.push((LightNode(local_position, chunk.origin), neighbour_light_level));
+                            self.sky_removing_queue
+                                .push_back((LightNode(local_position, chunk.origin), neighbour_light_level));
                         } else if neighbour_light_level >= node_light_level {
-                            self.sky_addition_queue.push_back(LightNode(local_position, chunk.origin));
+                            self.sky_addition_queue
+                                .push_back((LightNode(local_position, chunk.origin), neighbour_light_level));
                         }
                     }
                 }
             }
         }
 
-        while let Some(node) = self.sky_addition_queue.pop_front() {
+        while let Some((node, light_level)) = self.sky_addition_queue.pop_front() {
             let world_position = Chunk::to_world_pos(node.1, node.0);
-            let light_level = self.chunk_manager.get_local_sky_light(node.1, node.0);
 
             for face in [Face::Left, Face::Right, Face::Back, Face::Front, Face::Bottom, Face::Top] {
                 let (chunk, position) = Chunk::to_origin_and_local(world_position + face.as_normal());
@@ -171,13 +161,16 @@ impl<'a, C: ChunkAccess> BfsLight<'a, C> {
                     let block = chunk.get_block_by_idx_unchecked(subchunk, index);
 
                     let skip_decrease = face == Face::Bottom && light_level == 15;
-                    let (blocks, consumes) = Self::get_props(&mut self.props_cache, block_source, &block.name);
+                    let blocks_light = block_source.blocks_light(block.id);
+                    let consumes = block_source.light_consumption(block.id);
 
-                    if !blocks && chunk.get_sky_light_by_idx(subchunk, index) + 2 <= light_level {
+                    if !blocks_light && chunk.get_sky_light_by_idx(subchunk, index) + 2 <= light_level {
+                        let light_level = light_level - consumes - u8::from(!skip_decrease);
+
                         chunk.dirty = true;
-                        chunk.set_sky_light(position, light_level - consumes - u8::from(!skip_decrease));
+                        chunk.set_sky_light_by_idx(subchunk, index, light_level);
 
-                        self.sky_addition_queue.push_back(LightNode(position, chunk.origin));
+                        self.sky_addition_queue.push_back((LightNode(position, chunk.origin), light_level));
                     }
                 }
             }

@@ -1,4 +1,5 @@
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
 pub struct Thickness([f32; 4]);
 
 impl Thickness {

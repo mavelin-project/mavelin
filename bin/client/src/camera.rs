@@ -48,20 +48,24 @@ impl Camera {
         }
     }
 
+    #[inline]
     pub fn new(position: Point3D) -> Self {
         Self { position, ..Self::default() }
     }
 
+    #[inline]
     pub const fn target(&self) -> Point3D {
         Point3D::new(self.position.x + self.front.x, self.position.y + self.front.y, self.position.z + self.front.z)
     }
 
+    #[inline]
     pub fn set_position<T: AabbSource>(&mut self, context: &PhysicsContext<T>, position: Point3D) {
         self.position = position;
         self.update_looking_at(context);
         self.update_frustum();
     }
 
+    #[inline]
     pub fn update_looking_at<T: AabbSource>(&mut self, context: &PhysicsContext<T>) {
         const BLOCK_REACH_DISTANCE: f32 = 20f32;
 
@@ -71,6 +75,7 @@ impl Camera {
         self.looking_at = context.raycast(origin, target, true).filter(RayCastResult::is_block);
     }
 
+    #[inline]
     pub fn handle_mouse<T: AabbSource>(&mut self, context: &PhysicsContext<T>, (yaw, pitch): (f32, f32)) {
         self.front = Vector3D::new(yaw.cos() * pitch.cos(), pitch.sin(), yaw.sin() * pitch.cos()).normalize();
         self.right = self.front.cross(Vector3D::Y).normalize();
@@ -79,18 +84,22 @@ impl Camera {
         self.update_looking_at(context);
     }
 
+    #[inline]
     pub fn projection(&self) -> Transform3D {
         Transform3D::perspective_rh_gl(self.fov, self.aspect_ratio, self.z_near, self.z_far)
     }
 
+    #[inline]
     pub fn view(&self) -> Transform3D {
         Transform3D::look_at_rh(self.position, self.target(), self.up)
     }
 
+    #[inline]
     pub fn matrix(&self) -> Transform3D {
         self.projection() * self.view()
     }
 
+    #[inline]
     pub fn update_frustum(&mut self) {
         self.frustum.update(self.matrix());
     }

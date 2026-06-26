@@ -35,7 +35,7 @@ impl LeafDistanceCalculator {
         self.updates.clear();
     }
 
-    pub fn update<C: ChunkAccess>(&mut self, chunks: &mut C) {
+    pub fn update<C: ChunkAccess>(&mut self, oak_leaves: u32, chunks: &mut C) {
         while let Some(check) = self.updates.pop_front() {
             let target_distance = check.distance + 1;
 
@@ -62,7 +62,7 @@ impl LeafDistanceCalculator {
                 let state = chunks.get_block(pos);
 
                 if let Some(state) = state
-                    && state.name == "game:oak_leaves"
+                    && state.id == oak_leaves
                 {
                     let distance = state.get_i64("distance").unwrap_or(7);
 
@@ -94,10 +94,20 @@ impl LeafDistanceCalculator {
     }
 }
 
-pub struct TreesGenerator;
+pub struct TreesGenerator {
+    pub(crate) air: u32,
+    pub(crate) oak_leaves: u32,
+    pub(crate) oak_log: u32,
+    pub(crate) grass_block: u32,
+    pub(crate) dirt: u32,
+    pub(crate) water: u32,
+    pub(crate) ice: u32,
+    pub(crate) glass: u32,
+    pub(crate) snow: u32,
+}
 
 impl TreesGenerator {
-    pub fn populate<C: ChunkAccess>(chunks: &mut C, random: &mut Random, center: IPoint3D) -> bool {
+    pub fn populate<C: ChunkAccess>(&self, chunks: &mut C, random: &mut Random, center: IPoint3D) -> bool {
         let l = random.next_i32(3) + 4;
         let mut flag = true;
         let mut ldc = LeafDistanceCalculator::new();
@@ -125,7 +135,7 @@ impl TreesGenerator {
                         if (0..CHUNK_HEIGHT_I32).contains(&i1) {
                             let block = chunks.get_block(IPoint3D::new(j1, i1, k1));
 
-                            if !block.is_none_or(|block| block.name == "game:air" || block.name == "game:oak_leaves") {
+                            if !block.is_none_or(|block| block.id == self.air || block.id == self.oak_leaves) {
                                 flag = false;
                             }
                         } else {
@@ -138,8 +148,8 @@ impl TreesGenerator {
             if flag {
                 let block = chunks.get_block(center - IPoint3D::Y);
 
-                if block.is_some_and(|block| block.name == "game:grass_block" || block.name == "game:dirt") && center.y < CHUNK_HEIGHT_I32 - l - 1 {
-                    chunks.set_block(center - IPoint3D::Y, SubChunkBlockState::new("game:dirt"));
+                if block.is_some_and(|block| block.id == self.grass_block || block.id == self.dirt) && center.y < CHUNK_HEIGHT_I32 - l - 1 {
+                    chunks.set_block(center - IPoint3D::Y, SubChunkBlockState::new(self.dirt));
 
                     for i2 in (center.y - 3 + l)..=(center.y + l) {
                         let j1 = i2 - (center.y + l);
@@ -154,10 +164,10 @@ impl TreesGenerator {
                                 if (j2.abs() != k1 || l2.abs() != k1 || random.next_i32(2) != 0 && j1 != 0)
                                     && !chunks
                                         .get_block(IPoint3D::new(l1, i2, k2))
-                                        .map(|block| block.name.as_str())
-                                        .is_some_and(|name| name != "game:air" && !["game:water", "game:snow", "game:glass", "game:ice"].contains(&name))
+                                        .map(|block| block.id)
+                                        .is_some_and(|name| name != self.air && ![self.water, self.snow, self.glass, self.ice].contains(&name))
                                 {
-                                    let mut state = SubChunkBlockState::new("game:oak_leaves");
+                                    let mut state = SubChunkBlockState::new(self.oak_leaves);
 
                                     state.set_i64("distance", 7);
 
@@ -170,15 +180,15 @@ impl TreesGenerator {
                     for i2 in 0..l {
                         if chunks
                             .get_block(center + IPoint3D::Y * i2)
-                            .is_none_or(|block| block.name == "game:air" || block.name == "game:oak_leaves")
+                            .is_none_or(|block| block.id == self.air || block.id == self.oak_leaves)
                         {
-                            chunks.set_block(center + IPoint3D::Y * i2, SubChunkBlockState::new("game:oak_log"));
+                            chunks.set_block(center + IPoint3D::Y * i2, SubChunkBlockState::new(self.oak_log));
 
                             ldc.add_log(center + IPoint3D::Y * i2);
                         }
                     }
 
-                    ldc.update(chunks);
+                    ldc.update(self.oak_leaves, chunks);
 
                     true
                 } else {
@@ -522,7 +532,7 @@ pub struct BigTreeGenerator {
 
 //                 if chunks
 //                     .get_block(aint3)
-//                     .is_some_and(|block| block.name != "game:air" &&
+//                     .is_some_and(|block| block.name != self.air &&
 // block.name != "oak_leaves")                 {
 //                     break;
 //                 }
@@ -540,8 +550,8 @@ pub struct BigTreeGenerator {
 
 //         if chunks
 //             .get_block(self.pos - IPoint3D::Y.to_vector())
-//             .is_some_and(|block| block.name == "game:grass_block" ||
-// block.name == "game:dirt")         {
+//             .is_some_and(|block| block.name == self.grass_block ||
+// block.name == self.dirt)         {
 //             let j = self.a(chunks, aint, aint1);
 
 //             if j == -1 {
@@ -585,10 +595,20 @@ pub struct BigTreeGenerator {
 //     }
 // }
 
-pub struct ForestGenerator;
+pub struct ForestGenerator {
+    pub(crate) air: u32,
+    pub(crate) oak_leaves: u32,
+    pub(crate) oak_log: u32,
+    pub(crate) grass_block: u32,
+    pub(crate) dirt: u32,
+    pub(crate) water: u32,
+    pub(crate) ice: u32,
+    pub(crate) glass: u32,
+    pub(crate) snow: u32,
+}
 
 impl ForestGenerator {
-    pub fn populate<C: ChunkAccess>(chunks: &mut C, random: &mut Random, center: IPoint3D) -> bool {
+    pub fn populate<C: ChunkAccess>(&self, chunks: &mut C, random: &mut Random, center: IPoint3D) -> bool {
         let l = random.next_i32(3) + 5;
         let mut flag = true;
         let mut ldc = LeafDistanceCalculator::new();
@@ -616,7 +636,7 @@ impl ForestGenerator {
                         if (0..CHUNK_HEIGHT_I32).contains(&i1) {
                             let block = chunks.get_block(IPoint3D::new(j1, i1, k1));
 
-                            if !block.is_none_or(|block| block.name == "game:air" || block.name == "game:oak_leaves") {
+                            if !block.is_none_or(|block| block.id == self.air || block.id == self.oak_leaves) {
                                 flag = false;
                             }
                         } else {
@@ -629,8 +649,8 @@ impl ForestGenerator {
             if flag {
                 let block = chunks.get_block(center - IPoint3D::Y);
 
-                if block.is_some_and(|block| block.name == "game:grass_block" || block.name == "game:dirt") && center.y < CHUNK_HEIGHT_I32 - l - 1 {
-                    chunks.set_block(center - IPoint3D::Y, SubChunkBlockState::new("game:dirt"));
+                if block.is_some_and(|block| block.id == self.grass_block || block.id == self.dirt) && center.y < CHUNK_HEIGHT_I32 - l - 1 {
+                    chunks.set_block(center - IPoint3D::Y, SubChunkBlockState::new(self.dirt));
 
                     for i2 in (center.y - 3 + l)..=(center.y + l) {
                         let j1 = i2 - (center.y + l);
@@ -645,10 +665,10 @@ impl ForestGenerator {
                                 if (j2.abs() != k1 || l2.abs() != k1 || random.next_i32(2) != 0 && j1 != 0)
                                     && !chunks
                                         .get_block(IPoint3D::new(l1, i2, k2))
-                                        .map(|block| block.name.as_str())
-                                        .is_some_and(|name| name != "game:air" && !["game:water", "game:snow", "game:glass", "game:ice"].contains(&name))
+                                        .map(|block| block.id)
+                                        .is_some_and(|name| name != self.air && ![self.water, self.snow, self.glass, self.ice].contains(&name))
                                 {
-                                    let mut state = SubChunkBlockState::new("game:oak_leaves");
+                                    let mut state = SubChunkBlockState::new(self.oak_leaves);
 
                                     state.set_i64("distance", 7);
 
@@ -661,15 +681,15 @@ impl ForestGenerator {
                     for i2 in 0..l {
                         if chunks
                             .get_block(center + IPoint3D::Y * i2)
-                            .is_none_or(|block| block.name == "game:air" || block.name == "game:oak_leaves")
+                            .is_none_or(|block| block.id == self.air || block.id == self.oak_leaves)
                         {
-                            chunks.set_block(center + IPoint3D::Y * i2, SubChunkBlockState::new("game:oak_log"));
+                            chunks.set_block(center + IPoint3D::Y * i2, SubChunkBlockState::new(self.oak_log));
 
                             ldc.add_log(center + IPoint3D::Y * i2);
                         }
                     }
 
-                    ldc.update(chunks);
+                    ldc.update(self.oak_leaves, chunks);
 
                     true
                 } else {

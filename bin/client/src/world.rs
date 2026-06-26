@@ -10,12 +10,11 @@ use horns::RenderBackend;
 #[cfg(feature = "multiplayer")]
 use meralus_network::{IncomingPacket, OutgoingPacket, Uuid};
 use meralus_physics::{PhysicsBody, PhysicsContext};
-use meralus_shared::{Color, Cube3D, Face, IPoint2D, IPoint3D, Point2D, Point3D, Ranged, Size3D, Transform3D, USizePoint3D, Vector3D};
+use meralus_shared::{Color, Face, IPoint2D, IPoint3D, Point2D, Point3D, Ranged, Size3D, Transform3D, USizePoint3D, Vector3D};
 use meralus_storage::Block;
 use meralus_tween::{RepeatMode, Tween};
 use meralus_world::{
-    BfsLight, CHUNK_HEIGHT, CHUNK_HEIGHT_F32, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, LocalChunkManager, SUBCHUNK_COUNT,
-    SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32,
+    BfsLight, CHUNK_HEIGHT, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, LocalChunkManager, SUBCHUNK_COUNT, SUBCHUNK_SIZE,
 };
 use meralus_worldgen::ChunkGenerator;
 use tracing::info;
@@ -24,16 +23,12 @@ use crate::{
     AabbProvider, Camera, FIXED_FRAMERATE, GraphicsSettings, INVENTORY_HOTBAR_SLOTS, Interval, Item, LimitedAabbProvider, PlayerController, ResourceStorage,
     TICK_RATE, TPS,
     clock::Clock,
-    cube_outline,
     input::Input,
     player::ItemType,
-    render::{
-        chunk::{ChunkRenderer, VoxelFace, VoxelMeshBuilder},
-        common::CommonVertex,
-    },
+    render::chunk::{ChunkRenderer, VoxelFace, VoxelMeshBuilder},
 };
 
-const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.4, 0.75);
+const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.5, 0.75);
 
 #[non_exhaustive]
 pub enum EntityData {
@@ -78,14 +73,14 @@ impl Entity {
         match &self.data {
             EntityData::Item { transition, item } => {
                 let animation_value = transition.get_copy();
-                let model = resource_storage.models.get_unchecked(resource_storage.blocks.get_model_by_name(&item.id));
+                let model = resource_storage.models.get_unchecked(resource_storage.blocks.get_model_by_name(item.id));
                 let mut current_block = self.body.position.floor().as_ivec3();
                 let light = chunk_manager.get_light_level(current_block);
                 let matrix = Transform3D::from_rotation_y(animation_value * const { 360f32.to_radians() });
                 let animation_value = if animation_value > 0.5 { 1.0 - animation_value } else { animation_value };
                 let position_offset = Point3D::new(0.0, const { Point3D::new(0.3, 0.3, 0.3).y / 2.0 }, 0.0);
                 let block_below = loop {
-                    if chunk_manager.get_block(current_block).is_some_and(|b| b.name != "game:air") {
+                    if chunk_manager.get_block(current_block).is_some_and(|b| !b.is_air()) {
                         break Some(current_block);
                     } else if current_block.y <= 0 {
                         break None;
@@ -390,8 +385,8 @@ impl JobManager {
 
                         chunk.set_sky_light(pos, 15);
 
-                        if pos.y > 0 && chunk.get_block(pos - USizePoint3D::Y).is_some() {
-                            bfs_light.sky_addition_queue.push_back(LightNode(pos, origin));
+                        if pos.y > 0 && chunk.get_block(pos - USizePoint3D::Y).is_some_and(|b| !b.is_air()) {
+                            bfs_light.sky_addition_queue.push_back((LightNode(pos, origin), 15));
 
                             break;
                         }
@@ -421,7 +416,7 @@ impl JobManager {
                     if snapshot.chunk_manager.get_chunk(origin).unwrap().subchunks[subchunk_idx]
                         .palette
                         .iter()
-                        .any(|block| block.name != "game:air")
+                        .any(|block| !block.is_air())
                     {
                         snapshot.compute_subchunk_mesh(origin, subchunk_idx)
                     } else {
@@ -520,12 +515,12 @@ impl World {
         let position = Chunk::to_world_pos(origin, local);
 
         if let Some(state) = self.chunk_manager.get_block(position)
-            && state.name != "game:air"
-            && let Some(block) = self.resource_storage.get_block(&state.name)
+            && !state.is_air()
+            && let Some(block) = self.resource_storage.blocks.get(state.id)
         {
             if block.droppable() {
                 self.entities.spawn_item(position.as_vec3() + Point3D::new(0.35, 0.0, 0.35), Item {
-                    id: state.name.clone(),
+                    id: state.id,
                     ty: ItemType::Block,
                     amount: 1,
                 });
@@ -600,7 +595,7 @@ impl World {
             if let Some(entity) = self.entities.remove(entity_id)
                 && let EntityData::Item { item, .. } = entity.data
             {
-                self.player.inventory.try_insert(item);
+                self.player.inventory.try_insert(&item);
             }
         }
     }
@@ -824,22 +819,22 @@ impl World {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn chunk_borders(&self, white_pixel_uv: Point2D) -> Vec<CommonVertex> {
-        self.chunk_manager.chunks().fold(Vec::new(), |mut lines, chunk| {
-            let origin = chunk.origin.as_vec2() * SUBCHUNK_SIZE_F32;
+    // #[allow(dead_code)]
+    // pub fn chunk_borders(&self, white_pixel_uv: Point2D) -> Vec<CommonVertex> {
+    //     self.chunk_manager.chunks().fold(Vec::new(), |mut lines, chunk| {
+    //         let origin = chunk.origin.as_vec2() * SUBCHUNK_SIZE_F32;
 
-            lines.extend(cube_outline(
-                Cube3D::new(
-                    Point3D::new(origin.x, 0.0, origin.y),
-                    Size3D::new(SUBCHUNK_SIZE_F32, CHUNK_HEIGHT_F32, SUBCHUNK_SIZE_F32),
-                ),
-                white_pixel_uv,
-            ));
+    //         lines.extend(cube_outline(
+    //             Cube3D::new(
+    //                 Point3D::new(origin.x, 0.0, origin.y),
+    //                 Size3D::new(SUBCHUNK_SIZE_F32, CHUNK_HEIGHT_F32,
+    // SUBCHUNK_SIZE_F32),             ),
+    //             white_pixel_uv,
+    //         ));
 
-            lines
-        })
-    }
+    //         lines
+    //     })
+    // }
 }
 
 #[allow(clippy::type_complexity)]
@@ -883,15 +878,16 @@ impl<'a, C: ChunkAccess> WorldSnapshot<'a, C> {
                     state,
                     self.resource_storage
                         .models
-                        .get_unchecked(self.resource_storage.blocks.get_model_by_name(&state.name)),
+                        .get_unchecked(self.resource_storage.blocks.get_model_by_name(state.id)),
                 )
             }) {
                 let world_position = chunk.to_world(local_position);
-                let neighbours = Face::NORMALS.map(|face| self.chunk_manager.get_block(world_position + face).filter(|b| b.name != "game:air"));
+                let neighbours = Face::NORMALS.map(|face| self.chunk_manager.get_block(world_position + face).filter(|b| !b.is_air()));
 
                 let (cull_if_same, tint_color): (bool, Option<Color>) = self
                     .resource_storage
-                    .get_block(&state.name)
+                    .blocks
+                    .get(state.id)
                     .map_or((false, None), |block: &dyn Block| (block.cull_if_same(), block.tint_color()));
 
                 for element in &model.elements {
@@ -903,10 +899,10 @@ impl<'a, C: ChunkAccess> WorldSnapshot<'a, C> {
                                         neighbour,
                                         self.resource_storage
                                             .models
-                                            .get_unchecked(self.resource_storage.blocks.get_model_by_name(&neighbour.name)),
+                                            .get_unchecked(self.resource_storage.blocks.get_model_by_name(neighbour.id)),
                                     )
                                 })
-                                .is_some_and(|(neighbour, model)| model.is_opaque(*opposite_face) || (cull_if_same && neighbour.name == state.name))
+                                .is_some_and(|(neighbour, model)| model.is_opaque(*opposite_face) || (cull_if_same && neighbour.id == state.id))
                         });
 
                         if !culled {

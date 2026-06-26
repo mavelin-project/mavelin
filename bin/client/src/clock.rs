@@ -15,22 +15,27 @@ pub struct Clock {
 }
 
 impl Clock {
+    #[inline]
     pub const fn default() -> Self {
         Self::new(REAL_DAY_DURATION.checked_div(2).expect("failed to divide real day duration"))
     }
 
+    #[inline]
     pub const fn new(time: Duration) -> Self {
         Self { time }
     }
 
+    #[inline]
     pub const fn time(&self) -> Duration {
         self.time
     }
 
+    #[inline]
     pub const fn get_progress(&self) -> f32 {
         self.time.div_duration_f32(REAL_DAY_DURATION)
     }
 
+    #[inline]
     pub const fn get_visual_progress(&self) -> (bool, f32) {
         let progress = self.get_progress();
         let visual_progress = if progress > 0.5 { progress - 0.5 } else { progress };
@@ -38,6 +43,7 @@ impl Clock {
         (progress > 0.5, visual_progress * 2.0)
     }
 
+    #[inline]
     pub const fn tick(&mut self) {
         self.time = self.time.checked_add(SECOND_DURATION).expect("failed to add one second");
 
