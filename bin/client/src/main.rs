@@ -742,6 +742,8 @@ impl State for GameLoop {
 
             let progress = world.clock.get_progress();
 
+            info!(target: "client", delta = ?delta, "Rendering world");
+
             world
                 .chunk_renderer
                 .set_sun_position(if progress > 0.5 { 1.0 - progress } else { progress } * 2.0);
@@ -1293,6 +1295,8 @@ Rendered subchunks: {} / {total_subchunks}",
             }
 
             context.finish(backend, &mut frame, window_context.window_size());
+
+            info!(target: "client", delta = ?delta, "World render frame finished");
         } else {
             frame.clear_color_and_depth(Color::from_u32_rgb(0x1D211B).as_value(), 1.0);
 
