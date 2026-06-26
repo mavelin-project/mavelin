@@ -812,8 +812,20 @@ impl World {
                 );
 
                 for origin in chunks {
+                    info!(
+                        target: "client/world",
+                        chunk = ?origin,
+                        "Spawning generation job"
+                    );
+
                     self.job_manager.spawn_generation_job(self.seed, origin, self.resource_storage.clone());
                     self.job_manager.jobs.insert(origin);
+
+                    info!(
+                        target: "client/world",
+                        chunk = ?origin,
+                        "Spawned generation job"
+                    );
                 }
             }
         }

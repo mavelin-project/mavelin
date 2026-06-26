@@ -39,7 +39,6 @@ lyon_tessellation = "1.0.20"
 meck.workspace = true
 swash = { version = "0.2.9", features = ["render"] }
 euclid = { version = "0.22.14", features = ["bytemuck"] }
-msdf_font = "0.3.1"
 etagere = "0.3.0"
 
 [lints]

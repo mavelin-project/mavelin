@@ -123,9 +123,6 @@ name = "arrayvec"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f02882884d3e1bc524fb12c79f107f6ad0e1cfd498c536ffb494301740995dfe"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "as-raw-xcb-connection"
@@ -1144,12 +1141,6 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.32.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
-
-[[package]]
-name = "glam"
 version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "898f5a568a84989b6c0f8caa50a93074b97dbdc58fc6d9543157bb4562758933"
@@ -1273,7 +1264,7 @@ name = "horns"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "glam 0.33.1",
+ "glam",
  "glow",
  "glutin",
  "raw-window-handle",
@@ -1453,26 +1444,13 @@ checksum = "065632c16b39f4c00bc5514de0698474d1b6c36120743a154c78ca27ffc1ffe1"
 dependencies = [
  "atomic-arena",
  "cpal",
- "glam 0.33.1",
+ "glam",
  "mint",
  "pastey",
  "rtrb",
  "send_wrapper",
  "symphonia",
  "triple_buffer",
-]
-
-[[package]]
-name = "kurbo"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b60dfc32f652b926df6192e55525b16d186c69d47876c3ead4da5cc9f8450e2"
-dependencies = [
- "arrayvec",
- "euclid",
- "polycool",
- "serde",
- "smallvec",
 ]
 
 [[package]]
@@ -1533,19 +1511,6 @@ dependencies = [
  "libc",
  "plain",
  "redox_syscall 0.8.1",
-]
-
-[[package]]
-name = "linesweeper"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8421b276e96af0ace5f3d8d2d165d0dea07fe764d2fe94ec06bb1acaf8a1e759"
-dependencies = [
- "arrayvec",
- "kurbo",
- "polycool",
- "rustc-hash",
- "smallvec",
 ]
 
 [[package]]
@@ -1629,7 +1594,7 @@ dependencies = [
 name = "meck"
 version = "0.1.0"
 dependencies = [
- "glam 0.33.1",
+ "glam",
  "image",
 ]
 
@@ -1687,7 +1652,6 @@ dependencies = [
  "meralus-tween",
  "meralus-world",
  "meralus-worldgen",
- "msdf_font",
  "rayon",
  "serde",
  "swash",
@@ -1754,7 +1718,7 @@ name = "meralus-shared"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "glam 0.33.1",
+ "glam",
  "serde",
 ]
 
@@ -1956,18 +1920,6 @@ checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
-]
-
-[[package]]
-name = "msdf_font"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63283288bbd649f530978120c3e02f866b1cfae47c5a305b1ec2384d4f78d4ec"
-dependencies = [
- "glam 0.32.1",
- "kurbo",
- "linesweeper",
- "ttf-parser",
 ]
 
 [[package]]
@@ -2564,15 +2516,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "polycool"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50596ddc09eb5ad5f75cacd40209568e66df71baf86e1499a0e99c4cff12a5a6"
-dependencies = [
- "arrayvec",
-]
-
-[[package]]
 name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3048,9 +2991,6 @@ name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "smithay-client-toolkit"
