@@ -31,7 +31,7 @@ use horns::{MagnifyFilter, MinifyFilter, RenderBackend, RenderInfo, Texture2d};
 use kira::{AudioManager, AudioManagerSettings, backend::cpal::CpalBackendSettings};
 use meralus_engine::{Application, CursorGrabMode, KeyCode, KeyboardModifiers, MouseButton, State, WindowContext};
 use meralus_physics::{Aabb, AabbSource, PhysicsContext};
-use meralus_shared::{AsValue, Color, Face, IPoint2D, IPoint3D, Lerp, Point2D, Point3D, Quat, Rect, Size2D, Transform3D, USize2D, Vector2D, Vector3D};
+use meralus_shared::{AsValue, Color, Face, IPoint2D, IPoint3D, ISize3D, Lerp, Point2D, Point3D, Quat, Rect, Size2D, Transform3D, USize2D, Vector2D, Vector3D};
 use meralus_storage::{Block, ResourceStorage, TextureStorage};
 use meralus_tween::{Animation, Tween};
 use meralus_world::{BfsLight, BlockSource, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, SUBCHUNK_COUNT, SubChunkBlockState};
@@ -490,11 +490,46 @@ impl State for GameLoop {
 
     fn handle_mouse_button(&mut self, button: MouseButton, is_pressed: bool) {
         self.input.mouse.handle_mouse_button(button, is_pressed);
+    }
+
+    fn handle_mouse_motion(&mut self, delta: Option<Vector2D>, position: Option<Point2D>) {
+        if let Some(delta) = delta
+            && let Some(world) = self.world.as_mut()
+            && world.player_controllable
+        {
+            let provider = AabbProvider {
+                chunk_manager: &world.chunk_manager,
+                entity_manager: &world.entities,
+                storage: self.resource_manager.as_ref(),
+            };
+
+            let context = PhysicsContext::new(provider);
+
+            world.camera.handle_mouse(&context, world.player.handle_mouse(delta));
+        } else if let Some(position) = position {
+            self.input.mouse.handle_mouse_motion(position);
+            self.context.process_mouse_move(position);
+        }
+    }
+
+    fn handle_mouse_wheel(&mut self, delta: Vector2D) {
+        if let Some(world) = &mut self.world {
+            if delta.y > 0.0 {
+                world.inventory_slot.decrease();
+            } else if delta.y < 0.0 {
+                world.inventory_slot.increase();
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines, clippy::significant_drop_tightening)]
+    fn update(&mut self, context: WindowContext, backend: &RenderBackend, delta: Duration) {
+        self.overlay.update(delta);
 
         if let Some(world) = &mut self.world {
-            if button == MouseButton::Left && is_pressed {
+            if self.input.mouse.is_pressed_once(MouseButton::Left) {
                 world.destroy_looking_at();
-            } else if self.input.mouse.is_pressed_once(MouseButton::Right) {
+            } else if self.input.mouse.is_pressed(MouseButton::Right) {
                 let current_slot = world.inventory_slot.value as usize;
 
                 if let Some(looking_at) = world.camera.looking_at
@@ -502,6 +537,11 @@ impl State for GameLoop {
                         .chunk_manager
                         .get_block(looking_at.position + looking_at.hit_side.as_normal())
                         .is_some_and(SubChunkBlockState::is_air)
+                    && !Aabb::new(
+                        (looking_at.position + looking_at.hit_side.as_normal()).as_dvec3(),
+                        (looking_at.position + looking_at.hit_side.as_normal() + ISize3D::ONE).as_dvec3(),
+                    )
+                    .intersects(&world.player.player_aabb())
                     && let Some((item, _)) = world.player.inventory.take_hotbar_item(current_slot)
                 {
                     let position = looking_at.position + looking_at.hit_side.as_normal();
@@ -559,41 +599,6 @@ impl State for GameLoop {
                 }
             }
         }
-    }
-
-    fn handle_mouse_motion(&mut self, delta: Option<Vector2D>, position: Option<Point2D>) {
-        if let Some(delta) = delta
-            && let Some(world) = self.world.as_mut()
-            && world.player_controllable
-        {
-            let provider = AabbProvider {
-                chunk_manager: &world.chunk_manager,
-                entity_manager: &world.entities,
-                storage: self.resource_manager.as_ref(),
-            };
-
-            let context = PhysicsContext::new(provider);
-
-            world.camera.handle_mouse(&context, world.player.handle_mouse(delta));
-        } else if let Some(position) = position {
-            self.input.mouse.handle_mouse_motion(position);
-            self.context.process_mouse_move(position);
-        }
-    }
-
-    fn handle_mouse_wheel(&mut self, delta: Vector2D) {
-        if let Some(world) = &mut self.world {
-            if delta.y > 0.0 {
-                world.inventory_slot.decrease();
-            } else if delta.y < 0.0 {
-                world.inventory_slot.increase();
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_lines, clippy::significant_drop_tightening)]
-    fn update(&mut self, context: WindowContext, backend: &RenderBackend, delta: Duration) {
-        self.overlay.update(delta);
 
         if let Some(info) = &self.progress.info
             && self.overlay.progress.is_finished()
@@ -742,7 +747,7 @@ impl State for GameLoop {
 
             let progress = world.clock.get_progress();
 
-            info!(target: "client", delta = ?delta, "Rendering world");
+            // info!(target: "client", delta = ?delta, "Rendering world");
 
             world
                 .chunk_renderer
@@ -759,6 +764,7 @@ impl State for GameLoop {
             self.common_renderer.render(buffer, backend, None, window_context.window_size());
 
             let rendered_subchunks = world.chunk_renderer.render(
+                backend,
                 buffer,
                 world.camera.position,
                 &world.camera.frustum,
@@ -777,7 +783,7 @@ impl State for GameLoop {
                 backend,
                 &world.chunk_renderer,
                 buffer,
-                world.camera.matrix(),
+                world.camera.world_matrix(),
                 self.texture_atlas.with_filters(MinifyFilter::NearestMipmapLinear, MagnifyFilter::Nearest),
                 self.lightmap_atlas.with_filters(MinifyFilter::NearestMipmapLinear, MagnifyFilter::Nearest),
             );
@@ -1128,7 +1134,7 @@ Rendered subchunks: {} / {total_subchunks}",
                                     ChunkStage::Bare => Color::new(150, 150, 150, 255),
                                     ChunkStage::PopulationInProgress => Color::from_u32_rgb(0x73AF73),
                                     ChunkStage::Populated => Color::GREEN,
-                                    ChunkStage::LightningInProgress => Color::from_u32_rgb(0xB8FF00),
+                                    ChunkStage::LightingInProgress => Color::from_u32_rgb(0xB8FF00),
                                     ChunkStage::Lighted => Color::YELLOW,
                                     ChunkStage::MeshingInProgress => Color::from_u32_rgb(0x63639C),
                                     ChunkStage::Meshed => Color::BLUE,
@@ -1296,7 +1302,8 @@ Rendered subchunks: {} / {total_subchunks}",
 
             context.finish(backend, &mut frame, window_context.window_size());
 
-            info!(target: "client", delta = ?delta, "World render frame finished");
+            // info!(target: "client", delta = ?delta, "World render frame
+            // finished");
         } else {
             frame.clear_color_and_depth(Color::from_u32_rgb(0x1D211B).as_value(), 1.0);
 

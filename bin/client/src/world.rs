@@ -25,7 +25,7 @@ use crate::{
     clock::Clock,
     input::Input,
     player::ItemType,
-    render::chunk::{ChunkRenderer, VoxelFace, VoxelMeshBuilder},
+    render::chunk::{ChunkRenderer, TranslucentSubchunk, VoxelFace, VoxelMeshBuilder},
 };
 
 const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.5, 0.75);
@@ -309,7 +309,7 @@ enum JobResult {
         neighbours: [Arc<Chunk>; 8],
     },
     /// Populated terrain with lights.
-    Lightning {
+    Lighting {
         chunk: Arc<Chunk>,
         neighbours: [Arc<Chunk>; 8],
     },
@@ -369,38 +369,54 @@ impl JobManager {
         });
     }
 
-    fn spawn_lightning_job(&self, origin: IPoint2D, mut chunk_manager: LocalChunkManager, resource_storage: Arc<ResourceStorage>) {
+    fn spawn_lighting_job(&self, origin: IPoint2D, mut chunk_manager: LocalChunkManager, resource_storage: Arc<ResourceStorage>) {
         let sender = self.sender.clone();
 
         rayon::spawn(move || {
             let instant = Instant::now();
             let mut bfs_light = BfsLight::new(&mut chunk_manager);
 
-            let chunk = bfs_light.chunk_manager.get_chunk_mut(origin).unwrap();
+            for offset in [
+                IPoint2D::NEG_ONE,
+                IPoint2D::NEG_ONE.with_y(1),
+                IPoint2D::NEG_X,
+                IPoint2D::NEG_Y,
+                IPoint2D::ZERO,
+                IPoint2D::X,
+                IPoint2D::Y,
+                IPoint2D::ONE.with_y(-1),
+                IPoint2D::ONE,
+            ] {
+                let origin = origin + offset;
 
-            for z in 0..SUBCHUNK_SIZE {
-                for x in 0..SUBCHUNK_SIZE {
-                    for y in (0..CHUNK_HEIGHT).rev() {
-                        let pos = USizePoint3D::new(x, y, z);
+                if let Some(chunk) = bfs_light.chunk_manager.get_chunk_mut(origin) {
+                    for z in 0..SUBCHUNK_SIZE {
+                        for x in 0..SUBCHUNK_SIZE {
+                            for y in (0..CHUNK_HEIGHT).rev() {
+                                let pos = USizePoint3D::new(x, y, z);
 
-                        chunk.set_sky_light(pos, 15);
+                                chunk.set_sky_light(pos, 15);
 
-                        if pos.y > 0 && chunk.get_block(pos - USizePoint3D::Y).is_some_and(|b| !b.is_air()) {
-                            bfs_light.sky_addition_queue.push_back((LightNode(pos, origin), 15));
+                                if pos.y > 0 && chunk.get_block(pos - USizePoint3D::Y).is_some_and(|b| !b.is_air()) {
+                                    bfs_light.sky_addition_queue.push_back((LightNode(pos, origin), 15));
 
-                            break;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
             }
 
+            info!(target: "client/world", origin = ?origin, "Chunk lighting...");
+
             bfs_light.calculate_sky_light(resource_storage.as_ref());
+
+            info!(target: "client/world", origin = ?origin, "Chunk lighted in {:?}", instant.elapsed());
 
             let (chunk, neighbours) = chunk_manager.into_inner();
 
-            _ = sender.send(JobResult::Lightning { chunk, neighbours });
-
-            info!(target: "client/world", origin = ?origin, "Chunk lighted in {:?}", instant.elapsed());
+            _ = sender.send(JobResult::Lighting { chunk, neighbours });
         });
     }
 
@@ -664,7 +680,7 @@ impl World {
                         self.chunk_manager.replace(chunk, ChunkStage::Populated);
                     }
                 }
-                JobResult::Lightning { chunk, neighbours } => {
+                JobResult::Lighting { chunk, neighbours } => {
                     self.job_manager.jobs.remove(&chunk.origin);
                     self.chunk_manager.replace(chunk, ChunkStage::Lighted);
 
@@ -684,8 +700,9 @@ impl World {
                     self.chunk_manager.set_stage(origin, ChunkStage::Meshed);
 
                     for (subchunk_idx, mesh) in mesh.into_iter().rev().enumerate() {
-                        let solid = VoxelMeshBuilder::build_from_slice(backend, &self.chunk_renderer.shader, &mesh[0]);
-                        let translucent = VoxelMeshBuilder::build_from_slice(backend, &self.chunk_renderer.shader, &mesh[1]);
+                        let (solid, translucent) = mesh.into();
+                        let solid = VoxelMeshBuilder::build_from_slice(backend, &self.chunk_renderer.shader, &solid);
+                        let translucent = TranslucentSubchunk::new(backend, &self.chunk_renderer.shader, translucent, self.player.camera_position(), origin);
 
                         self.chunk_renderer.set_subchunk((origin, subchunk_idx), solid, translucent);
                     }
@@ -744,9 +761,9 @@ impl World {
                         }
                     }
 
-                    self.job_manager.spawn_lightning_job(origin, chunk_manager, self.resource_storage.clone());
+                    self.job_manager.spawn_lighting_job(origin, chunk_manager, self.resource_storage.clone());
 
-                    queue.push((origin, ChunkStage::LightningInProgress));
+                    queue.push((origin, ChunkStage::LightingInProgress));
                 }
                 ChunkStage::Lighted
                     if self.chunk_manager.neighbours_at_least(origin, ChunkStage::Lighted)
@@ -949,7 +966,7 @@ impl<'a, C: ChunkAccess> WorldSnapshot<'a, C> {
 
                             if model_face.is_opaque { &mut voxels[0] } else { &mut voxels[1] }.push(VoxelFace {
                                 vertices,
-                                position: world_position.as_vec3(),
+                                position: local_position.as_vec3(),
                                 lights,
                                 uvs,
                                 color: (if model_face.tint { tint_color.unwrap_or(Color::WHITE) } else { Color::WHITE })

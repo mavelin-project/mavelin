@@ -14,11 +14,11 @@ uniform samplerBuffer shape_data;
 uniform mat4 matrix;
 
 void main() {
-  int base = int(shape_id) * 3;  // 3 texels per shape
+  int base = int(shape_id) * 3;
 
-  vec4 t0 = texelFetch(shape_data, base + 0);  // color
-  vec4 t1 = texelFetch(shape_data, base + 1);  // half_size.xy, radii.xy (tl,tr)
-  vec4 t2 = texelFetch(shape_data, base + 2);  // radii.zw (br,bl), mode, _
+  vec4 t0 = texelFetch(shape_data, base + 0);  
+  vec4 t1 = texelFetch(shape_data, base + 1);
+  vec4 t2 = texelFetch(shape_data, base + 2);
 
   v_color     = t0;
   v_half_size = t1.xy;

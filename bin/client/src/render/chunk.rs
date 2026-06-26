@@ -1,12 +1,12 @@
 use std::{borrow::Borrow, hash::Hash};
 
 use horns::{
-    BackfaceCullingMode, Blend, BlendingFactor, Depth, DepthTest, DrawParams, ElementType, Program, RenderBackend, RenderInfo, RenderPass, SampledTexture2d,
-    create_shader, impl_vertex,
+    BackfaceCullingMode, Blend, BlendingFactor, Depth, DepthTest, DrawParams, ElementType, Program, ProgramBinder, RenderBackend, RenderInfo, RenderPass,
+    SampledTexture2d, create_shader, impl_vertex,
 };
 use indexmap::IndexMap;
-use meralus_shared::{AsValue, Color, FromValue, Frustum, FrustumCulling, IPoint2D, Point2D, Point3D, Transform3D};
-use meralus_world::{ChunkManager, SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32};
+use meralus_shared::{AsValue, Color, FromValue, Frustum, IPoint2D, IPoint3D, Point2D, Point3D, Transform3D};
+use meralus_world::{SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32, SUBCHUNK_SIZE_I32};
 
 use crate::{get_sky_color, render::RenderBuffer};
 
@@ -21,14 +21,14 @@ pub struct VoxelFace {
     pub color: Color,
 }
 
-#[allow(dead_code)]
-impl VoxelFace {
-    fn cmp(&self, camera_pos: Point3D, other: &Self) -> std::cmp::Ordering {
-        camera_pos
-            .distance_squared(self.position)
-            .total_cmp(&camera_pos.distance_squared(other.position))
-    }
-}
+// #[allow(dead_code)]
+// impl VoxelFace {
+//     fn cmp(&self, camera_pos: Point3D, other: &Self) -> std::cmp::Ordering {
+//         camera_pos
+//             .distance_squared(self.position)
+//             .total_cmp(&camera_pos.distance_squared(other.position))
+//     }
+// }
 
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -48,9 +48,47 @@ impl_vertex! {
     }
 }
 
+pub struct TranslucentSubchunk {
+    buffer: RenderBuffer<VoxelVertex, VoxelShader, u32>,
+    faces: Vec<VoxelFace>,
+    last_pos: Point3D,
+}
+
+impl TranslucentSubchunk {
+    pub fn new(backend: &RenderBackend, shader: &Program, mut faces: Vec<VoxelFace>, last_pos: Point3D, origin: IPoint2D) -> Self {
+        Self::resort_faces(&mut faces, last_pos, origin);
+
+        Self {
+            buffer: VoxelMeshBuilder::build_from_slice(backend, shader, &faces),
+            faces,
+            last_pos,
+        }
+    }
+
+    fn update(&mut self, backend: &RenderBackend, shader: &Program, last_pos: Point3D, origin: IPoint2D) {
+        if self.last_pos.distance_squared(last_pos) > 3.0 {
+            Self::resort_faces(&mut self.faces, last_pos, origin);
+
+            self.buffer = VoxelMeshBuilder::build_from_slice(backend, shader, &self.faces);
+        }
+    }
+
+    #[track_caller]
+    fn resort_faces(faces: &mut [VoxelFace], last_pos: Point3D, origin: IPoint2D) {
+        let origin = origin.as_vec2() * SUBCHUNK_SIZE_F32;
+        let local_camera_pos = last_pos - Point3D::new(origin.x, 0.0, origin.y);
+
+        faces.sort_unstable_by(|a, b| {
+            local_camera_pos
+                .distance_squared(b.position)
+                .total_cmp(&local_camera_pos.distance_squared(a.position))
+        });
+    }
+}
+
 struct RenderSubchunk {
     solid: RenderBuffer<VoxelVertex, VoxelShader, u32>,
-    translucent: RenderBuffer<VoxelVertex, VoxelShader, u32>,
+    translucent: TranslucentSubchunk,
 }
 
 pub struct VoxelMeshBuilder {
@@ -100,11 +138,13 @@ impl VoxelMeshBuilder {
 
     #[inline]
     pub fn push_transformed(&mut self, voxel: &VoxelFace, matrix: &Transform3D, origin: Point3D) {
+        let color = voxel.color.as_value();
+
         self.vertices.extend((0..4).map(|i| VoxelVertex {
             position: voxel.position + matrix.transform_point3(voxel.vertices[i] - origin) + origin,
             light: voxel.lights[i].into(),
             uv: voxel.uvs[i],
-            color: voxel.color.as_value(),
+            color,
         }));
 
         self.push_indices();
@@ -112,11 +152,13 @@ impl VoxelMeshBuilder {
 
     #[inline]
     pub fn push(&mut self, voxel: &VoxelFace) {
+        let color = voxel.color.as_value();
+
         self.vertices.extend((0..4).map(|i| VoxelVertex {
             position: voxel.position + voxel.vertices[i],
             light: voxel.lights[i].into(),
             uv: voxel.uvs[i],
-            color: voxel.color.as_value(),
+            color,
         }));
 
         self.push_indices();
@@ -162,7 +204,7 @@ pub struct ChunkRenderer {
     pub shader: Program,
     sun_position: f32,
     subchunks: IndexMap<(IPoint2D, usize), RenderSubchunk>,
-    last_position: IPoint2D,
+    last_position: Point3D,
 }
 
 impl ChunkRenderer {
@@ -172,17 +214,12 @@ impl ChunkRenderer {
             shader: backend.create_program(&VoxelShader).unwrap(),
             sun_position: 0.0,
             subchunks: IndexMap::new(),
-            last_position: IPoint2D::MAX,
+            last_position: Point3D::NAN,
         }
     }
 
     #[inline]
-    pub fn set_subchunk(
-        &mut self,
-        origin: (IPoint2D, usize),
-        solid: RenderBuffer<VoxelVertex, VoxelShader, u32>,
-        translucent: RenderBuffer<VoxelVertex, VoxelShader, u32>,
-    ) {
+    pub fn set_subchunk(&mut self, origin: (IPoint2D, usize), solid: RenderBuffer<VoxelVertex, VoxelShader, u32>, translucent: TranslucentSubchunk) {
         self.subchunks.insert(origin, RenderSubchunk { solid, translucent });
     }
 
@@ -211,7 +248,7 @@ impl ChunkRenderer {
     }
 
     #[inline]
-    fn bind_shader(&self, matrix: Transform3D, atlas: SampledTexture2d, lightmap: SampledTexture2d, sun_y: f32) {
+    fn bind_shader(&self, matrix: Transform3D, atlas: SampledTexture2d, lightmap: SampledTexture2d, sun_y: f32) -> ProgramBinder<'_> {
         self.shader
             .bind()
             .with_uniform("matrix", matrix)
@@ -219,11 +256,7 @@ impl ChunkRenderer {
             .with_uniform("lightmap", lightmap)
             .with_uniform("sun_position", [0.0, sun_y, 0.0])
             .with_uniform("with_tex", true)
-            .with_uniform("fog_color", <[f32; 4]>::from_value(&get_sky_color((false, 0.5), 0.0)))
-            .with_uniform("fog_env_start", 32.0)
-            .with_uniform("fog_env_end", 144.0)
-            .with_uniform("fog_render_dist_start", 112.0)
-            .with_uniform("fog_render_dist_end", 160.0);
+            .with_uniform("with_fog", false)
     }
 
     pub fn render_buffer(
@@ -240,7 +273,9 @@ impl ChunkRenderer {
             atlas,
             lightmap,
             if full_bright { const { (1.0 - 0.5) / 0.96 } } else { self.sun_position },
-        );
+        )
+        .with_uniform("chunk", IPoint3D::ZERO)
+        .with_uniform("camera_pos", Point3D::ZERO);
 
         pass.apply_params(DrawParams {
             blend: Some(Blend {
@@ -264,69 +299,51 @@ impl ChunkRenderer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn render_with_params<T: Frustum>(
+    pub fn render<T: Frustum>(
         &mut self,
+        backend: &RenderBackend,
         pass: &mut RenderPass,
         camera_pos: Point3D,
         frustum: &T,
         matrix: Transform3D,
         atlas: SampledTexture2d,
         lightmap: SampledTexture2d,
-        params: DrawParams,
     ) -> RenderInfo {
-        let camera_pos = ChunkManager::<()>::to_local(camera_pos.as_ivec3());
-
-        if self.last_position != camera_pos {
+        if self.last_position.is_nan() || self.last_position.distance_squared(camera_pos) > 3.0 {
             self.subchunks.sort_unstable_by(|&a, _, &b, _| {
-                let a = (camera_pos - a.0).as_vec2().length_squared();
-                let b = (camera_pos - b.0).as_vec2().length_squared();
+                #[inline]
+                const fn center((pos, idx): (IPoint2D, usize)) -> Point3D {
+                    Point3D::new(
+                        pos.x as f32 * SUBCHUNK_SIZE_F32 + SUBCHUNK_SIZE_F32 * 0.5,
+                        idx as f32 * SUBCHUNK_SIZE_F32 + SUBCHUNK_SIZE_F32 * 0.5,
+                        pos.y as f32 * SUBCHUNK_SIZE_F32 + SUBCHUNK_SIZE_F32 * 0.5,
+                    )
+                }
 
-                a.total_cmp(&b)
+                camera_pos.distance_squared(center(a)).total_cmp(&camera_pos.distance_squared(center(b))) // ascending — solid uses forward, translucent uses .rev()
             });
 
             self.last_position = camera_pos;
         }
 
-        let mut render_info = RenderInfo::default();
+        let render_info = RenderInfo::default();
+        let mut binder = self
+            .shader
+            .bind()
+            .with_uniform("matrix", matrix)
+            .with_uniform("tex", atlas)
+            .with_uniform("lightmap", lightmap)
+            .with_uniform("sun_position", [0.0, self.sun_position, 0.0])
+            .with_uniform("with_tex", true)
+            .with_uniform("with_fog", true)
+            .with_uniform("fog_color", <[f32; 4]>::from_value(&get_sky_color((false, 0.5), 0.0)))
+            .with_uniform("fog_env_start", 32.0)
+            .with_uniform("fog_env_end", 144.0)
+            .with_uniform("fog_render_dist_start", 112.0)
+            .with_uniform("fog_render_dist_end", 160.0)
+            .with_uniform("camera_pos", camera_pos);
 
-        self.bind_shader(matrix, atlas, lightmap, self.sun_position);
-
-        pass.apply_params(params);
-
-        for (&key, subchunk) in &self.subchunks {
-            if Self::is_subchunk_visible(frustum, key) && !subchunk.solid.indices.is_empty() {
-                pass.draw_elements(&subchunk.solid.vertices, &subchunk.solid.indices);
-
-                render_info.draw_calls += 1;
-                render_info.vertices += subchunk.solid.vertices.len();
-            }
-        }
-
-        for (&key, subchunk) in &self.subchunks {
-            if Self::is_subchunk_visible(frustum, key) && !subchunk.translucent.indices.is_empty() {
-                pass.draw_elements(&subchunk.translucent.vertices, &subchunk.translucent.indices);
-
-                render_info.draw_calls += 1;
-                render_info.vertices += subchunk.translucent.vertices.len();
-            }
-        }
-
-        pass.reset_params();
-
-        render_info
-    }
-
-    #[inline]
-    pub fn render(
-        &mut self,
-        pass: &mut RenderPass,
-        camera_pos: Point3D,
-        frustum: &FrustumCulling,
-        matrix: Transform3D,
-        atlas: SampledTexture2d,
-        lightmap: SampledTexture2d,
-    ) -> RenderInfo {
-        self.render_with_params(pass, camera_pos, frustum, matrix, atlas, lightmap, DrawParams {
+        pass.apply_params(DrawParams {
             blend: Some(Blend {
                 color: (BlendingFactor::SourceAlpha, BlendingFactor::OneMinusSourceAlpha),
                 alpha: (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),
@@ -336,6 +353,40 @@ impl ChunkRenderer {
                 write: true,
             }),
             culling: Some(BackfaceCullingMode::CullCounterClockwise),
-        })
+        });
+
+        for (&key, subchunk) in &self.subchunks {
+            if Self::is_subchunk_visible(frustum, key) && !subchunk.solid.indices.is_empty() {
+                binder.set_uniform("chunk", IPoint3D::new(key.0.x * SUBCHUNK_SIZE_I32, 0, key.0.y * SUBCHUNK_SIZE_I32));
+
+                pass.draw_elements(&subchunk.solid.vertices, &subchunk.solid.indices);
+            }
+        }
+
+        pass.apply_params(DrawParams {
+            blend: Some(Blend {
+                color: (BlendingFactor::SourceAlpha, BlendingFactor::OneMinusSourceAlpha),
+                alpha: (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),
+            }),
+            depth: Some(Depth {
+                test: DepthTest::IfLessOrEqual,
+                write: false,
+            }),
+            culling: Some(BackfaceCullingMode::CullCounterClockwise),
+        });
+
+        for (&key, subchunk) in self.subchunks.iter_mut().rev() {
+            if Self::is_subchunk_visible(frustum, key) && !subchunk.translucent.buffer.indices.is_empty() {
+                subchunk.translucent.update(backend, &self.shader, camera_pos, key.0);
+
+                binder.set_uniform("chunk", IPoint3D::new(key.0.x * SUBCHUNK_SIZE_I32, 0, key.0.y * SUBCHUNK_SIZE_I32));
+
+                pass.draw_elements(&subchunk.translucent.buffer.vertices, &subchunk.translucent.buffer.indices);
+            }
+        }
+
+        pass.reset_params();
+
+        render_info
     }
 }

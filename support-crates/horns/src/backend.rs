@@ -85,11 +85,13 @@ impl RenderBackend {
     }
 
     pub fn resize(&self, width: u32, height: u32) -> Result<(), Error> {
-        self.surface.resize(
-            &self.context,
-            NonZeroU32::new(width).ok_or_else(|| glutin::error::Error::from(glutin::error::ErrorKind::NotSupported("window width can't be zero")))?,
-            NonZeroU32::new(height).ok_or_else(|| glutin::error::Error::from(glutin::error::ErrorKind::NotSupported("window height can't be zero")))?,
-        );
+        if width > 0 && height > 0 {
+            self.surface.resize(
+                &self.context,
+                NonZeroU32::new(width).ok_or_else(|| glutin::error::Error::from(glutin::error::ErrorKind::NotSupported("window width can't be zero")))?,
+                NonZeroU32::new(height).ok_or_else(|| glutin::error::Error::from(glutin::error::ErrorKind::NotSupported("window height can't be zero")))?,
+            );
+        }
 
         unsafe { self.gl.viewport(0, 0, width.cast_signed(), height.cast_signed()) };
 

@@ -14,12 +14,12 @@ out vec4 f_bright_color;
 uniform sampler2D tex;
 uniform sampler2D lightmap;
 uniform bool with_tex;
-
-uniform vec4 fog_color;
-uniform float fog_env_start;
-uniform float fog_env_end;
-uniform float fog_render_dist_start;
-uniform float fog_render_dist_end;
+uniform bool with_fog;
+uniform vec4 fog_color = vec4(1.0);
+uniform float fog_env_start = 32.0;
+uniform float fog_env_end = 144.0;
+uniform float fog_render_dist_start = 112.0;
+uniform float fog_render_dist_end = 160.0;
 
 float linear_value(float dist, float start, float end) {
   if (dist <= start) { return 0.0; }
@@ -49,9 +49,12 @@ void main() {
     vec4 lightmap_intensity = texture(lightmap, v_tex_coords) * vec4(0.21, 0.71, 0.07, 0.0);
     float gray = lightmap_intensity.r + lightmap_intensity.g + lightmap_intensity.b;
     float light_intensity = max(gray, v_light_intensity);
-    vec4 color = texture(tex, v_tex_coords) * vec4(v_color.rgb * light_intensity, v_color.a);
+    
+    f_color = texture(tex, v_tex_coords) * vec4(v_color.rgb * light_intensity, v_color.a);
 
-    f_color = apply_fog(color, v_spherical_dist, v_cylindrical_dist);
+    if (with_fog) {
+      f_color = apply_fog(f_color, v_spherical_dist, v_cylindrical_dist);
+    }
 
     // float brightness = dot(f_color.rgb, vec3(0.2126, 0.7152, 0.0722));
 

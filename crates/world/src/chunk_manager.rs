@@ -104,22 +104,20 @@ impl LocalChunkManager {
 }
 
 impl ChunkAccess for LocalChunkManager {
+    #[inline]
     fn get_chunk(&self, origin: IPoint2D) -> Option<&Arc<Chunk>> {
-        let local_x = (origin.x - self.origin.x + 1) as usize;
-        let local_y = (origin.y - self.origin.y + 1) as usize;
-        let idx = local_x + local_y * 3;
-
-        unsafe { Some(self.chunks.get_unchecked(idx)) }
+        self.chunks
+            .get((origin.x - self.origin.x + 1) as usize + (origin.y - self.origin.y + 1) as usize * 3)
     }
 
+    #[inline]
     fn get_chunk_mut(&mut self, origin: IPoint2D) -> Option<&mut Chunk> {
-        let local_x = (origin.x - self.origin.x + 1) as usize;
-        let local_y = (origin.y - self.origin.y + 1) as usize;
-        let idx = local_x + local_y * 3;
-
-        unsafe { Some(Arc::make_mut(self.chunks.get_unchecked_mut(idx))) }
+        self.chunks
+            .get_mut((origin.x - self.origin.x + 1) as usize + (origin.y - self.origin.y + 1) as usize * 3)
+            .map(Arc::make_mut)
     }
 
+    #[inline]
     fn get_block(&self, position: IPoint3D) -> Option<&SubChunkBlockState> {
         if position.y >= 0 && position.y < const { SUBCHUNK_SIZE_I32 * SUBCHUNK_COUNT_I32 } {
             let chunk = self.get_chunk(ChunkManager::<()>::to_local(position))?;
@@ -130,6 +128,7 @@ impl ChunkAccess for LocalChunkManager {
         }
     }
 
+    #[inline]
     fn set_block(&mut self, position: IPoint3D, block: SubChunkBlockState) {
         if position.y >= 0
             && position.y < const { SUBCHUNK_SIZE_I32 * SUBCHUNK_COUNT_I32 }
@@ -139,6 +138,7 @@ impl ChunkAccess for LocalChunkManager {
         }
     }
 
+    #[inline]
     fn get_block_light(&self, position: IPoint3D) -> u8 {
         self.get_chunk(ChunkManager::<()>::to_local(position)).map_or(15, |chunk| {
             if position.y >= 0 && position.y < const { SUBCHUNK_SIZE_I32 * SUBCHUNK_COUNT_I32 } {
@@ -149,6 +149,7 @@ impl ChunkAccess for LocalChunkManager {
         })
     }
 
+    #[inline]
     fn get_sky_light(&self, position: IPoint3D) -> u8 {
         self.get_chunk(ChunkManager::<()>::to_local(position)).map_or(15, |chunk| {
             let local_position = Chunk::to_local(position);
@@ -161,6 +162,7 @@ impl ChunkAccess for LocalChunkManager {
         })
     }
 
+    #[inline]
     fn get_light_level(&self, position: IPoint3D) -> u8 {
         self.get_chunk(ChunkManager::<()>::to_local(position)).map_or(240, |chunk| {
             if position.y >= 0 && position.y < const { SUBCHUNK_SIZE_I32 * SUBCHUNK_COUNT_I32 } {
@@ -171,6 +173,7 @@ impl ChunkAccess for LocalChunkManager {
         })
     }
 
+    #[inline]
     fn get_block_with_light_level(&self, position: IPoint3D) -> (Option<&SubChunkBlockState>, u8) {
         if position.y >= 0
             && position.y < const { SUBCHUNK_SIZE_I32 * SUBCHUNK_COUNT_I32 }
@@ -185,40 +188,48 @@ impl ChunkAccess for LocalChunkManager {
         }
     }
 
+    #[inline]
     fn get_local_block_light(&self, origin: IPoint2D, position: USizePoint3D) -> u8 {
         self.get_chunk(origin).map_or(0, |chunk| chunk.get_block_light(position))
     }
 
+    #[inline]
     fn set_local_block_light(&mut self, origin: IPoint2D, position: USizePoint3D, light_level: u8) {
         if let Some(chunk) = self.get_chunk_mut(origin) {
             chunk.set_block_light(position, light_level);
         }
     }
 
+    #[inline]
     fn get_local_sky_light(&self, origin: IPoint2D, position: USizePoint3D) -> u8 {
         self.get_chunk(origin).map_or(0, |chunk| chunk.get_sky_light(position))
     }
 
+    #[inline]
     fn set_local_sky_light(&mut self, origin: IPoint2D, position: USizePoint3D, light_level: u8) {
         if let Some(chunk) = self.get_chunk_mut(origin) {
             chunk.set_sky_light(position, light_level);
         }
     }
 
+    #[inline]
     fn get_local_light(&self, origin: IPoint2D, position: USizePoint3D, is_sky_light: bool) -> u8 {
         self.get_chunk(origin).map_or(0, |chunk| chunk.get_light(position, is_sky_light))
     }
 
+    #[inline]
     fn set_local_light(&mut self, origin: IPoint2D, position: USizePoint3D, is_sky_light: bool, light_level: u8) {
         if let Some(chunk) = self.get_chunk_mut(origin) {
             chunk.set_light(position, is_sky_light, light_level);
         }
     }
 
+    #[inline]
     fn get_chunk_by_block(&self, position: IPoint3D) -> Option<&Arc<Chunk>> {
         self.get_chunk(ChunkManager::<()>::to_local(position))
     }
 
+    #[inline]
     fn get_chunk_by_block_mut(&mut self, position: IPoint3D) -> Option<&mut Chunk> {
         self.get_chunk_mut(ChunkManager::<()>::to_local(position))
     }
@@ -230,7 +241,7 @@ pub enum ChunkStage {
     Bare,
     PopulationInProgress,
     Populated,
-    LightningInProgress,
+    LightingInProgress,
     Lighted,
     MeshingInProgress,
     Meshed,

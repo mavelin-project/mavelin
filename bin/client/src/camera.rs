@@ -91,6 +91,11 @@ impl Camera {
 
     #[inline]
     pub fn view(&self) -> Transform3D {
+        Transform3D::look_at_rh(Point3D::ZERO, self.front, self.up)
+    }
+
+    #[inline]
+    pub fn world_view(&self) -> Transform3D {
         Transform3D::look_at_rh(self.position, self.target(), self.up)
     }
 
@@ -100,7 +105,12 @@ impl Camera {
     }
 
     #[inline]
+    pub fn world_matrix(&self) -> Transform3D {
+        self.projection() * self.world_view()
+    }
+
+    #[inline]
     pub fn update_frustum(&mut self) {
-        self.frustum.update(self.matrix());
+        self.frustum.update(self.world_matrix());
     }
 }

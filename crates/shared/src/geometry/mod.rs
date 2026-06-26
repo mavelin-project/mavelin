@@ -16,6 +16,11 @@ pub type USize3D = glam::UVec3;
 pub type UPoint2D = glam::UVec2;
 pub type UPoint3D = glam::UVec3;
 
+pub type U16Size2D = glam::U16Vec2;
+pub type U16Size3D = glam::U16Vec3;
+pub type U16Point2D = glam::U16Vec2;
+pub type U16Point3D = glam::U16Vec3;
+
 pub type USizePoint2D = glam::USizeVec2;
 pub type USizePoint3D = glam::USizeVec3;
 

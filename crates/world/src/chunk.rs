@@ -709,32 +709,6 @@ impl<'a> Iterator for SubChunkIter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        // if self.y == SUBCHUNK_SIZE {
-        //     None
-        // } else if self.z == SUBCHUNK_XZ_MAX && self.x == SUBCHUNK_XZ_MAX {
-        //     let position = USizePoint3D::new(self.x, self.y, SUBCHUNK_XZ_MAX);
-
-        //     self.y += 1;
-        //     self.z = 0;
-        //     self.x = 0;
-
-        //     Some((self.y_offset + position,
-        // self.subchunk.get_block_unchecked(position))) } else if self.x ==
-        // SUBCHUNK_XZ_MAX {     let position = USizePoint3D::new(SUBCHUNK_XZ_MAX,
-        // self.y, self.z);
-
-        //     self.z += 1;
-        //     self.x = 0;
-
-        //     Some((self.y_offset + position,
-        // self.subchunk.get_block_unchecked(position))) } else {
-        //     let position = USizePoint3D::new(self.x, self.y, self.z);
-
-        //     self.x += 1;
-
-        //     Some((self.y_offset + position,
-        // self.subchunk.get_block_unchecked(position))) }
-
         if self.current_index >= const { SUBCHUNK_SIZE * SUBCHUNK_SIZE * SUBCHUNK_SIZE } {
             return None;
         }
