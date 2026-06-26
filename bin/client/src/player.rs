@@ -176,7 +176,7 @@ impl PlayerController {
     }
 
     #[inline]
-    pub fn player_aabb(&self) -> Aabb {
+    pub fn aabb(&self) -> Aabb {
         Self::calc_player_aabb(self.body.position)
     }
 

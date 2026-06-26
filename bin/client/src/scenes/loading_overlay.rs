@@ -13,11 +13,13 @@ pub struct LoadingOverlay {
 }
 
 impl Screen for LoadingOverlay {
+    type Message = ();
+
     fn update(&mut self, delta: Duration) {
         self.progress.advance(delta);
     }
 
-    fn draw(&self, scope: &mut UiSubcontext<'_, RowStrategy, RowStrategy>) {
+    fn draw(&self, scope: &mut UiSubcontext<'_, RowStrategy, RowStrategy>, _: &mut Option<()>) {
         // scope.center(|scope| {
         //     scope.abs_pos(0.0, 24.0);
         //     scope.part_of_parent_width(1.0);

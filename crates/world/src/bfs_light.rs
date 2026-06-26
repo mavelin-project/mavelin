@@ -105,7 +105,7 @@ impl<'a, C: ChunkAccess> BfsLight<'a, C> {
                     let block = chunk.get_block_by_idx_unchecked(subchunk, index);
 
                     if !block_source.blocks_light(block.id) && chunk.get_block_light(position) + 2 <= light_level {
-                        let light_level = light_level - block_source.light_consumption(block.id);
+                        let light_level = light_level - 1 - block_source.light_consumption(block.id);
 
                         chunk.dirty = true;
                         chunk.set_block_light_by_idx(subchunk, index, light_level);

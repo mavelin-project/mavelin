@@ -71,17 +71,8 @@ const PARTICLE: [ParticleVertex; 8] = [
     }, // 7
 ];
 
-struct ParticleShader;
-
-impl Shader for ParticleShader {
-    fn fragment(&self) -> String {
-        std::fs::read_to_string("./resources/shaders/particle.fs").unwrap()
-    }
-
-    fn vertex(&self) -> String {
-        std::fs::read_to_string("./resources/shaders/particle.vs").unwrap()
-    }
-}
+create_shader!(ParticleShader => "./resources/shaders/particle");
+create_shader!(BloomShader => "./resources/shaders/bloom");
 
 pub struct ParticleSystem {
     particles: Vec<PhysicsBody>,
@@ -198,17 +189,6 @@ const SCREEN_RECTANGLE: [BasicVertex; 4] = [
     },
 ];
 
-struct BloomProgram;
-
-impl Shader for BloomProgram {
-    fn fragment(&self) -> String {
-        std::fs::read_to_string("./resources/shaders/bloom.fs").unwrap()
-    }
-
-    fn vertex(&self) -> String {
-        std::fs::read_to_string("./resources/shaders/bloom.vs").unwrap()
-    }
-}
 
 pub struct WorldScene {
     main_color_attachment: Texture2d,
@@ -233,7 +213,7 @@ impl WorldScene {
 
             screen_rectangle: backend.create_vertex_buffer(&SCREEN_RECTANGLE, false)?,
 
-            program: backend.create_program(&BloomProgram),
+            program: backend.create_program(&BloomShader),
         })
     }
 

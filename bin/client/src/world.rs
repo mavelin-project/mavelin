@@ -2,33 +2,35 @@ use std::{
     collections::hash_map::{Iter, IterMut},
     path::PathBuf,
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use ahash::{HashMap, HashSet};
 use horns::RenderBackend;
 #[cfg(feature = "multiplayer")]
 use meralus_network::{IncomingPacket, OutgoingPacket, Uuid};
-use meralus_physics::{PhysicsBody, PhysicsContext};
+use meralus_physics::{Aabb, PhysicsBody, PhysicsContext};
 use meralus_shared::{Color, Face, IPoint2D, IPoint3D, Point2D, Point3D, Ranged, Size3D, Transform3D, USizePoint3D, Vector3D};
 use meralus_storage::Block;
 use meralus_tween::{RepeatMode, Tween};
 use meralus_world::{
     BfsLight, CHUNK_HEIGHT, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, LocalChunkManager, SUBCHUNK_COUNT, SUBCHUNK_SIZE,
+    SubChunkBlockState,
 };
 use meralus_worldgen::ChunkGenerator;
 use tracing::info;
 
 use crate::{
-    AabbProvider, Camera, FIXED_FRAMERATE, GraphicsSettings, INVENTORY_HOTBAR_SLOTS, Interval, Item, LimitedAabbProvider, PlayerController, ResourceStorage,
-    TICK_RATE, TPS,
+    Camera, INVENTORY_HOTBAR_SLOTS, Interval, Item, PHYSICS_RATE, PlayerController, ResourceStorage, TICK_RATE,
     clock::Clock,
     input::Input,
+    physics::{AabbProvider, LimitedAabbProvider},
     player::ItemType,
     render::chunk::{ChunkRenderer, TranslucentSubchunk, VoxelFace, VoxelMeshBuilder},
+    settings::GraphicsSettings,
 };
 
-const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.5, 0.75);
+pub const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.5, 0.75);
 
 #[non_exhaustive]
 pub enum EntityData {
@@ -408,8 +410,6 @@ impl JobManager {
                 }
             }
 
-            info!(target: "client/world", origin = ?origin, "Chunk lighting...");
-
             bfs_light.calculate_sky_light(resource_storage.as_ref());
 
             info!(target: "client/world", origin = ?origin, "Chunk lighted in {:?}", instant.elapsed());
@@ -451,13 +451,10 @@ impl JobManager {
 pub struct World {
     pub clock: Clock,
     pub tick_interval: Interval,
-    pub ticks: usize,
-    pub tick_sum: usize,
-    pub current_tick: usize,
+    pub physics_interval: Interval,
 
     pub camera: Camera,
     pub player: PlayerController,
-    pub player_controllable: bool,
     pub inventory_slot: Ranged<u8>,
 
     pub chunk_manager: ChunkManager<ChunkFileCache>,
@@ -486,13 +483,10 @@ impl World {
 
         Self {
             camera: Camera::new(player.camera_position()),
-            ticks: 0,
-            tick_sum: 0,
-            current_tick: 0,
             chunk_renderer: ChunkRenderer::new(backend),
             tick_interval: Interval::new(TICK_RATE),
+            physics_interval: Interval::new(PHYSICS_RATE),
             player,
-            player_controllable: false,
             inventory_slot: Ranged::new(0, 0, INVENTORY_HOTBAR_SLOTS),
             clock: Clock::default(),
             chunk_manager,
@@ -562,6 +556,90 @@ impl World {
         }
     }
 
+    pub fn place(&mut self, position: IPoint3D, id: u32) {
+        let chunk = ChunkManager::<()>::to_local(position);
+
+        info!("placing block in {chunk}");
+
+        if let Some(local) = self.chunk_manager.to_chunk_local(position) {
+            let block = self.resource_storage.blocks.get(id).unwrap();
+
+            if let Some(chunk) = self.chunk_manager.get_chunk_mut(chunk) {
+                chunk.set_block(local, SubChunkBlockState::new(id));
+                chunk.dirty = true;
+
+                info!("placed block at {position}");
+            }
+
+            for normal in Face::NORMALS {
+                let chunk_position = ChunkManager::<()>::to_local(position + normal);
+
+                if chunk_position != chunk
+                    && let Some(chunk) = self.chunk_manager.get_chunk_mut(chunk_position)
+                {
+                    chunk.dirty = true;
+
+                    info!("marked neighbour {chunk_position} dirty");
+                }
+            }
+
+            for normal in [IPoint3D::NEG_ONE, IPoint3D::NEG_ONE.with_x(1), IPoint3D::ONE.with_x(-1), IPoint3D::ONE] {
+                let chunk_position = ChunkManager::<()>::to_local(position + normal);
+
+                if chunk_position != chunk
+                    && let Some(chunk) = self.chunk_manager.get_chunk_mut(chunk_position)
+                {
+                    chunk.dirty = true;
+
+                    info!("marked neighbour {chunk_position} dirty");
+                }
+            }
+
+            info!("calculating light");
+
+            let mut light = BfsLight::new(&mut self.chunk_manager);
+
+            if block.light_level() > 0 {
+                info!("calculating light for torch");
+
+                light.add_block_custom(LightNode(local, chunk), block.light_level());
+                light.calculate_block_light(self.resource_storage.as_ref());
+
+                info!("calculated light for torch");
+            } else if block.blocks_light() {
+                info!("calculating light for block");
+
+                light.remove_sky(LightNode(local, chunk));
+                light.calculate_sky_light(self.resource_storage.as_ref());
+
+                info!("calculated light for block");
+            }
+        }
+    }
+
+    pub fn place_held(&mut self) {
+        let Some(result) = self.camera.looking_at else {
+            return;
+        };
+
+        let position = result.position + result.hit_side.as_normal();
+
+        if self.chunk_manager.get_block(position).is_none_or(|block| !block.is_air()) || Aabb::cube(position.as_dvec3()).intersects(&self.player.aabb()) {
+            return;
+        }
+
+        let Some((id, _)) = self.player.inventory.take_hotbar_item(self.inventory_slot.value as usize) else {
+            return;
+        };
+
+        self.place(position, id);
+        self.camera.update_looking_at(&PhysicsContext::new(AabbProvider {
+            chunk_manager: &self.chunk_manager,
+            entity_manager: &self.entities,
+            storage: self.resource_storage.as_ref(),
+        }));
+    }
+
     pub fn physics_step(&mut self, input: &Input) {
         let provider = AabbProvider {
             chunk_manager: &self.chunk_manager,
@@ -572,9 +650,9 @@ impl World {
         let context = PhysicsContext::new(provider);
         let grounded = self.player.body.is_on_ground;
 
-        context.physics_step(&mut self.player.body, FIXED_FRAMERATE.as_secs_f32());
+        context.physics_step(&mut self.player.body, PHYSICS_RATE.as_secs_f32());
 
-        self.player.physics_step(input, &mut self.camera, FIXED_FRAMERATE.as_secs_f32());
+        self.player.physics_step(input, &mut self.camera, PHYSICS_RATE.as_secs_f32());
         self.player.body.config.friction = if self.player.body.config.gravity_scale <= 1e-7 {
             8.0
         } else if !grounded {
@@ -585,18 +663,16 @@ impl World {
 
         self.camera.set_position(&context, self.player.camera_position());
 
-        let player_aabb = self.player.player_aabb();
+        let player_aabb = self.player.aabb();
         let mut remove_entities: Vec<usize> = Vec::new();
 
-        let provider = LimitedAabbProvider {
+        let context = PhysicsContext::new(LimitedAabbProvider {
             chunk_manager: &self.chunk_manager,
             storage: self.resource_storage.as_ref(),
-        };
-
-        let context = PhysicsContext::new(provider);
+        });
 
         for (id, entity) in &mut self.entities {
-            context.physics_step(&mut entity.body, FIXED_FRAMERATE.as_secs_f32());
+            context.physics_step(&mut entity.body, PHYSICS_RATE.as_secs_f32());
 
             if matches!(entity.data, EntityData::Item { .. }) {
                 let entity_aabb = entity.body.aabb();
@@ -616,13 +692,8 @@ impl World {
         }
     }
 
-    pub const fn tick(&mut self, time_paused: bool) {
-        self.tick_sum += 1;
-        self.current_tick = self.tick_sum % TPS;
-
-        if !time_paused {
-            self.clock.tick();
-        }
+    pub const fn tick(&mut self) {
+        self.clock.tick();
 
         #[cfg(feature = "multiplayer")]
         if let WorldType::Remote { sender, receiver, player_uuid } = &mut self.ty {
@@ -663,7 +734,21 @@ impl World {
     }
 
     #[allow(clippy::too_many_lines)]
-    pub fn update(&mut self, backend: &RenderBackend, settings: GraphicsSettings) {
+    pub fn update(&mut self, backend: &RenderBackend, settings: GraphicsSettings, input: &Input, delta: Duration) {
+        if self.clock.active() {
+            for _ in 0..self.physics_interval.update(delta) {
+                self.physics_step(input);
+
+                if let Some(entity) = self.entities.get_mut(0) {
+                    entity.set_rotation(0, self.player.get_vector_for_rotation().as_vec3());
+                }
+            }
+
+            for _ in 0..self.tick_interval.update(delta) {
+                self.tick();
+            }
+        }
+
         for result in self.job_manager.receiver.try_iter() {
             match result {
                 JobResult::Generation { chunk } => {

@@ -3,7 +3,7 @@ use std::time::Duration;
 const REAL_DAY_DURATION: Duration = Duration::from_hours(24);
 
 /// Duration of day + night in ticks
-const DAYNIGHT_DURATION: u32 = 200; // 24_000;
+const DAYNIGHT_DURATION: u32 = 4000; // 24_000;
 
 /// Duration of one game second
 const SECOND_DURATION: Duration = REAL_DAY_DURATION
@@ -12,25 +12,32 @@ const SECOND_DURATION: Duration = REAL_DAY_DURATION
 
 pub struct Clock {
     time: Duration,
+    active: bool,
 }
 
+#[allow(clippy::inline_always)]
 impl Clock {
-    #[inline]
+    #[inline(always)]
     pub const fn default() -> Self {
         Self::new(REAL_DAY_DURATION.checked_div(2).expect("failed to divide real day duration"))
     }
 
-    #[inline]
+    #[inline(always)]
     pub const fn new(time: Duration) -> Self {
-        Self { time }
+        Self { time, active: false }
     }
 
-    #[inline]
+    #[inline(always)]
     pub const fn time(&self) -> Duration {
         self.time
     }
 
-    #[inline]
+    #[inline(always)]
+    pub const fn active(&self) -> bool {
+        self.active
+    }
+
+    #[inline(always)]
     pub const fn get_progress(&self) -> f32 {
         self.time.div_duration_f32(REAL_DAY_DURATION)
     }
@@ -41,6 +48,11 @@ impl Clock {
         let visual_progress = if progress > 0.5 { progress - 0.5 } else { progress };
 
         (progress > 0.5, visual_progress * 2.0)
+    }
+
+    #[inline(always)]
+    pub const fn toggle(&mut self) {
+        self.active = !self.active;
     }
 
     #[inline]

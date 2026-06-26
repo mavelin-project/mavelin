@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use meralus_shared::{AsValue, Color, FromValue, Frustum, IPoint2D, IPoint3D, Point2D, Point3D, Transform3D};
 use meralus_world::{SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32, SUBCHUNK_SIZE_I32};
 
-use crate::{get_sky_color, render::RenderBuffer};
+use super::RenderBuffer;
 
 create_shader!(pub VoxelShader => "./resources/shaders/voxel");
 
@@ -202,9 +202,10 @@ impl VoxelMeshBuilder {
 
 pub struct ChunkRenderer {
     pub shader: Program,
-    sun_position: f32,
     subchunks: IndexMap<(IPoint2D, usize), RenderSubchunk>,
     last_position: Point3D,
+    sun_position: f32,
+    fog_color: Color,
 }
 
 impl ChunkRenderer {
@@ -212,9 +213,10 @@ impl ChunkRenderer {
     pub fn new(backend: &RenderBackend) -> Self {
         Self {
             shader: backend.create_program(&VoxelShader).unwrap(),
-            sun_position: 0.0,
             subchunks: IndexMap::new(),
             last_position: Point3D::NAN,
+            sun_position: 0.0,
+            fog_color: Color::BLACK,
         }
     }
 
@@ -226,6 +228,11 @@ impl ChunkRenderer {
     #[inline]
     pub const fn set_sun_position(&mut self, value: f32) {
         self.sun_position = value;
+    }
+
+    #[inline]
+    pub const fn set_fog_color(&mut self, value: Color) {
+        self.fog_color = value;
     }
 
     #[inline]
@@ -326,7 +333,7 @@ impl ChunkRenderer {
             self.last_position = camera_pos;
         }
 
-        let render_info = RenderInfo::default();
+        let mut render_info = RenderInfo::default();
         let mut binder = self
             .shader
             .bind()
@@ -336,11 +343,11 @@ impl ChunkRenderer {
             .with_uniform("sun_position", [0.0, self.sun_position, 0.0])
             .with_uniform("with_tex", true)
             .with_uniform("with_fog", true)
-            .with_uniform("fog_color", <[f32; 4]>::from_value(&get_sky_color((false, 0.5), 0.0)))
-            .with_uniform("fog_env_start", 32.0)
-            .with_uniform("fog_env_end", 144.0)
-            .with_uniform("fog_render_dist_start", 112.0)
-            .with_uniform("fog_render_dist_end", 160.0)
+            .with_uniform("fog_color", <[f32; 4]>::from_value(&self.fog_color))
+            .with_uniform("fog_env_start", SUBCHUNK_SIZE_F32)
+            .with_uniform("fog_env_end", SUBCHUNK_SIZE_F32 * 4.0)
+            .with_uniform("fog_render_dist_start", SUBCHUNK_SIZE_F32 * 3.0)
+            .with_uniform("fog_render_dist_end", SUBCHUNK_SIZE_F32 * 5.0)
             .with_uniform("camera_pos", camera_pos);
 
         pass.apply_params(DrawParams {
@@ -360,6 +367,8 @@ impl ChunkRenderer {
                 binder.set_uniform("chunk", IPoint3D::new(key.0.x * SUBCHUNK_SIZE_I32, 0, key.0.y * SUBCHUNK_SIZE_I32));
 
                 pass.draw_elements(&subchunk.solid.vertices, &subchunk.solid.indices);
+
+                render_info.draw_calls += 1;
             }
         }
 
@@ -382,6 +391,8 @@ impl ChunkRenderer {
                 binder.set_uniform("chunk", IPoint3D::new(key.0.x * SUBCHUNK_SIZE_I32, 0, key.0.y * SUBCHUNK_SIZE_I32));
 
                 pass.draw_elements(&subchunk.translucent.buffer.vertices, &subchunk.translucent.buffer.indices);
+
+                render_info.draw_calls += 1;
             }
         }
 

@@ -3,8 +3,8 @@ use std::collections::hash_map::Entry;
 use ahash::{HashMap, HashMapExt};
 use etagere::{AllocId, AtlasAllocator};
 use horns::{
-    Blend, BlendingFactor, DrawParams, ElementType, Error, IndexBuffer, Program, RenderBackend, RenderInfo, RenderPass, Shader, Texture2d, TextureBuffer,
-    VertexBuffer, impl_vertex,
+    Blend, BlendingFactor, DrawParams, ElementType, Error, IndexBuffer, Program, RenderBackend, RenderInfo, RenderPass, Texture2d, TextureBuffer, VertexBuffer,
+    create_shader, impl_vertex,
 };
 use lyon_tessellation::{FillOptions, FillTessellator, VertexBuffers, geometry_builder::simple_builder};
 use meralus_shared::{AsValue, Color, ISize2D, Point2D, RRect, Rect, Size2D, Thickness, Transform3D, USize2D};
@@ -18,17 +18,7 @@ use swash::{
 
 use crate::render::RawRenderBuffer;
 
-pub struct ShapeShader;
-
-impl Shader for ShapeShader {
-    fn fragment(&self) -> String {
-        std::fs::read_to_string("./resources/shaders/shape.fs").unwrap()
-    }
-
-    fn vertex(&self) -> String {
-        std::fs::read_to_string("./resources/shaders/shape.vs").unwrap()
-    }
-}
+create_shader!(ShapeShader => "./resources/shaders/shape");
 
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]

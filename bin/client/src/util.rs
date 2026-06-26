@@ -1,4 +1,6 @@
-use meralus_shared::{Color, Face, Point3D, Vector3D};
+use std::time::Duration;
+
+use meralus_shared::{Color, Face, Lerp, Point3D, Vector3D};
 
 use crate::input::Input;
 
@@ -162,3 +164,38 @@ pub fn format_bytes(bytes: usize) -> String {
 //         vertices
 //     })
 // }
+pub fn get_sky_color((after_day, progress): (bool, f32), weather: f32) -> Color {
+    let day_color: Color = Color::from_hsl(220.0, 0.2f32.mul_add(weather, 0.5), 0.6f32.mul_add(-weather, 0.75));
+    let night_color: Color = Color::from_hsl(220.0, 0.1f32.mul_add(weather, 0.35), 0.15f32.mul_add(-weather, 0.25));
+
+    if after_day {
+        day_color.lerp(&night_color, progress)
+    } else {
+        night_color.lerp(&day_color, progress)
+    }
+}
+
+pub struct Interval {
+    rate: Duration,
+    accel: Duration,
+}
+
+impl Interval {
+    pub const fn new(rate: Duration) -> Self {
+        Self { rate, accel: Duration::ZERO }
+    }
+
+    pub fn update(&mut self, delta: Duration) -> usize {
+        self.accel += delta;
+
+        let mut times = 0;
+
+        while self.accel >= self.rate {
+            self.accel -= self.rate;
+
+            times += 1;
+        }
+
+        times
+    }
+}

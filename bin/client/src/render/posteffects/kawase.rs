@@ -1,32 +1,11 @@
 use std::mem::{MaybeUninit, forget};
 
-use horns::{Error, Program, RenderBackend, Shader, Texture2d, VertexBuffer};
+use horns::{Error, Program, RenderBackend, Shader, Texture2d, VertexBuffer, create_shader};
 
 use crate::posteffects::WorldScene;
 
-struct DownscaleProgram;
-
-impl Shader for DownscaleProgram {
-    fn fragment(&self) -> String {
-        std::fs::read_to_string("./resources/shaders/downscale.fs").unwrap()
-    }
-
-    fn vertex(&self) -> String {
-        std::fs::read_to_string("./resources/shaders/downscale.vs").unwrap()
-    }
-}
-
-struct UpscaleProgram;
-
-impl Shader for UpscaleProgram {
-    fn fragment(&self) -> String {
-        std::fs::read_to_string("./resources/shaders/upscale.fs").unwrap()
-    }
-
-    fn vertex(&self) -> String {
-        std::fs::read_to_string("./resources/shaders/upscale.vs").unwrap()
-    }
-}
+create_shader!(DownscaleShader => "./resources/shaders/downscale");
+create_shader!(UpscaleShader => "./resources/shaders/upscale");
 
 pub struct DualKawase<const I: usize> {
     downscale_shader: Program,
@@ -59,8 +38,8 @@ impl<const I: usize> DualKawase<I> {
         let textures = assume_array_init(textures);
 
         Ok(Self {
-            downscale_shader: backend.create_program(&DownscaleProgram)?,
-            upscale_shader: backend.create_program(&UpscaleProgram)?,
+            downscale_shader: backend.create_program(&DownscaleShader)?,
+            upscale_shader: backend.create_program(&UpscaleShader)?,
 
             screen_rectangle: backend.create_vertex_buffer(&super::SCREEN_RECTANGLE, false)?,
 
