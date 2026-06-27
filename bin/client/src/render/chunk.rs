@@ -359,6 +359,12 @@ impl ChunkRenderer {
             self.last_position = camera_pos;
         }
 
+        for (&key, subchunk) in self.subchunks.iter_mut().rev() {
+            if Self::is_subchunk_visible(frustum, key) {
+                subchunk.translucent.update(camera_pos, key.0);
+            }
+        }
+
         let mut render_info = RenderInfo::default();
         let mut binder = self
             .shader
@@ -412,8 +418,6 @@ impl ChunkRenderer {
 
         for (&key, subchunk) in self.subchunks.iter_mut().rev() {
             if Self::is_subchunk_visible(frustum, key) && !subchunk.translucent.buffer.indices.is_empty() {
-                subchunk.translucent.update(camera_pos, key.0);
-
                 binder.set_uniform("chunk", IPoint3D::new(key.0.x * SUBCHUNK_SIZE_I32, 0, key.0.y * SUBCHUNK_SIZE_I32));
 
                 pass.draw_elements(&subchunk.translucent.buffer.vertices, &subchunk.translucent.buffer.indices);
