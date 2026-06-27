@@ -67,7 +67,7 @@ impl TranslucentSubchunk {
     }
 
     fn update(&mut self, last_pos: Point3D, origin: IPoint2D) {
-        if self.last_pos.distance_squared(last_pos) > 3.0 {
+        if self.last_pos.distance_squared(last_pos) > 3.0 && !self.faces.is_empty() {
             Self::resort_faces(&mut self.faces, last_pos, origin);
 
             let mut builder = VoxelMeshBuilder::new();
