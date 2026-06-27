@@ -13,7 +13,6 @@ pub enum RenderShape {
     Square(u16),
 }
 
-
 #[allow(clippy::inline_always)]
 #[inline(always)]
 const fn round_up(v: u16) -> u16 {
@@ -140,7 +139,6 @@ impl RenderShape {
         RenderShapeIter::new(center, self)
     }
 }
-
 
 pub struct RenderBuffer<V: Vertex, S: Shader, I: GlPrimitive> {
     pub vertices: VertexBuffer<V, S>,
