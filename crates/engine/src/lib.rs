@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use horns::{RenderBackend, RenderPass};
+use horns::RenderBackend;
 use meralus_shared::{InspectMut, Point2D, USize2D, Vector2D};
 use winit::{
     application::ApplicationHandler,
@@ -14,7 +14,7 @@ use winit::{
     event::{ButtonSource, DeviceEvent, DeviceId, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     icon::RgbaIcon,
-    keyboard::PhysicalKey,
+    keyboard::{ModifiersKeyState, PhysicalKey},
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
     window::{Window, WindowAttributes, WindowId},
 };
@@ -50,6 +50,10 @@ impl<'a> WindowContext<'a> {
         self.window.scale_factor()
     }
 
+    pub fn pre_present_notify(&self) {
+        self.window.pre_present_notify();
+    }
+
     pub fn close_window(&self) {
         self.event_loop.exit();
     }
@@ -81,7 +85,7 @@ pub trait State {
     fn handle_mouse_button(&mut self, button: MouseButton, is_pressed: bool) {}
 
     fn update(&mut self, context: WindowContext, display: &RenderBackend, delta: Duration) {}
-    fn render(&mut self, context: WindowContext, display: &RenderBackend, delta: Duration) -> RenderPass;
+    fn render(&mut self, context: WindowContext, display: &RenderBackend, delta: Duration);
 }
 
 pub struct ApplicationWindow<T: State> {
@@ -177,10 +181,18 @@ impl<T: State> ApplicationHandler for Application<T> {
 
                 self.window.inspect_mut(move |window| {
                     window.state.handle_keyboard_modifiers(KeyboardModifiers {
-                        alt_key: state.alt_key(),
-                        control_key: state.control_key(),
-                        shift_key: state.shift_key(),
-                        meta_key: state.meta_key(),
+                        alt_key: matches!(modifiers.lalt_state(), ModifiersKeyState::Pressed)
+                            | matches!(modifiers.ralt_state(), ModifiersKeyState::Pressed)
+                            | state.alt_key(),
+                        control_key: matches!(modifiers.lcontrol_state(), ModifiersKeyState::Pressed)
+                            | matches!(modifiers.rcontrol_state(), ModifiersKeyState::Pressed)
+                            | state.control_key(),
+                        shift_key: matches!(modifiers.lshift_state(), ModifiersKeyState::Pressed)
+                            | matches!(modifiers.rshift_state(), ModifiersKeyState::Pressed)
+                            | state.shift_key(),
+                        meta_key: matches!(modifiers.lsuper_state(), ModifiersKeyState::Pressed)
+                            | matches!(modifiers.rsuper_state(), ModifiersKeyState::Pressed)
+                            | state.meta_key(),
                     });
                 });
             }
@@ -220,13 +232,9 @@ impl<T: State> ApplicationHandler for Application<T> {
                     .state
                     .update(WindowContext::new(event_loop, window.window.as_ref()), &window.backend, window.delta);
 
-                let pass = window
+                window
                     .state
                     .render(WindowContext::new(event_loop, window.window.as_ref()), &window.backend, window.delta);
-
-                window.window.pre_present_notify();
-
-                pass.finish(&window.backend);
 
                 window.delta = window.last_time.map_or_else(|| Duration::ZERO, |last_time| last_time.elapsed());
                 window.last_time.replace(Instant::now());

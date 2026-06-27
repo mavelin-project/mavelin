@@ -1,3 +1,5 @@
+use core::fmt;
+
 use horns::{ElementType, Error, GlPrimitive, IndexBuffer, Program, RenderBackend, Shader, Vertex, VertexBuffer};
 use meralus_shared::IPoint2D;
 
@@ -11,6 +13,16 @@ pub enum RenderShape {
     Circle(u16),
     Rect(u16, u16),
     Square(u16),
+}
+
+impl fmt::Display for RenderShape {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Circle(r) => write!(f, "circle (radius = {r})"),
+            Self::Rect(width, height) => write!(f, "rect ({width}x{height})"),
+            Self::Square(size) => write!(f, "square ({size}x{size})"),
+        }
+    }
 }
 
 #[allow(clippy::inline_always)]

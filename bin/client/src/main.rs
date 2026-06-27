@@ -28,7 +28,7 @@ use std::{
 };
 
 use cpal::traits::HostTrait;
-use horns::{MagnifyFilter, MinifyFilter, RenderBackend, RenderPass, Texture2d};
+use horns::{MagnifyFilter, MinifyFilter, RenderBackend, Texture2d};
 use kira::{AudioManager, AudioManagerSettings, backend::cpal::CpalBackendSettings};
 use meralus_engine::{Application, CursorGrabMode, KeyCode, KeyboardModifiers, MouseButton, State, WindowContext};
 use meralus_physics::PhysicsContext;
@@ -421,7 +421,7 @@ impl State for GameLoop {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn render(&mut self, window_context: WindowContext, backend: &RenderBackend, delta: Duration) -> RenderPass {
+    fn render(&mut self, window_context: WindowContext, backend: &RenderBackend, delta: Duration) {
         if self.settings.debugging.fps_stat.len() >= 100 {
             self.settings.debugging.fps_stat.pop_front();
         }
@@ -682,7 +682,11 @@ Free GPU memory: {free_memory}
 Window size: {width}x{height}
 Game Time: {hours:02}:{minutes:02}
 Looking at {block}
+VSync: {}
+Render Shape: {}
 Rendered subchunks: {} / {total_subchunks}",
+self.settings.graphics.vsync,
+self.settings.graphics.render_shape,
                     rendered_subchunks.draw_calls
                 );
 
@@ -1014,11 +1018,13 @@ Rendered subchunks: {} / {total_subchunks}",
             self.settings.debugging.draw_calls_stat.pop_front();
         }
 
+        window_context.pre_present_notify();
+
+        let info = frame.finish(backend);
+
         self.settings.debugging.draw_calls_stat.push_back(info.draw_calls);
         self.settings.debugging.draw_calls_max = self.settings.debugging.draw_calls_max.max(info.draw_calls);
         self.settings.debugging.render_info = info;
-
-        frame
     }
 }
 
