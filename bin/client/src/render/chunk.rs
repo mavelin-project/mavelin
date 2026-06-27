@@ -9,6 +9,7 @@ use meralus_shared::{AsValue, Color, FromValue, Frustum, IPoint2D, IPoint3D, Poi
 use meralus_world::{SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32, SUBCHUNK_SIZE_I32};
 
 use super::RenderBuffer;
+use crate::render::RenderShape;
 
 create_shader!(pub VoxelShader => "./resources/shaders/voxel");
 
@@ -303,6 +304,12 @@ impl ChunkRenderer {
             draw_calls: 1,
             vertices: buffer.vertices.len(),
         }
+    }
+
+    pub fn filter_by_shape(&mut self, center: IPoint2D, shape: RenderShape) -> impl Iterator<Item = IPoint2D> {
+        self.subchunks
+            .extract_if(.., move |&(origin, _), _| !shape.test(center, origin))
+            .map(|((k, _), _)| k)
     }
 
     #[allow(clippy::too_many_arguments)]

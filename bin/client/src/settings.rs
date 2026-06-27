@@ -5,7 +5,7 @@ use meralus_shared::IPoint3D;
 use meralus_storage::ResourceStorage;
 use meralus_world::{Chunk, ChunkAccess};
 
-use crate::util::vertex_ao;
+use crate::{render::RenderShape, util::vertex_ao};
 
 #[derive(Debug, Clone)]
 pub struct Debugging {
@@ -148,7 +148,7 @@ impl LightStyle {
 #[allow(dead_code)]
 pub struct GraphicsSettings {
     pub light_style: LightStyle,
-    pub render_distance: usize,
+    pub render_shape: RenderShape,
     pub vsync: bool,
 }
 
@@ -156,7 +156,7 @@ impl Default for GraphicsSettings {
     fn default() -> Self {
         Self {
             light_style: LightStyle::Smooth,
-            render_distance: 12,
+            render_shape: RenderShape::Circle(12),
             vsync: true,
         }
     }

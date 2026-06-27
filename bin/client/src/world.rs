@@ -797,21 +797,14 @@ impl World {
 
         let mut queue = Vec::new();
         let origin = ChunkManager::<()>::to_local(self.player.body.position.as_ivec3());
-        let mut chunks = (-10..10)
-            .flat_map(|x| (-10..10).map(move |z| origin + IPoint2D::new(x, z)))
-            .filter(|origin| self.chunk_manager.stages.contains_key(origin))
-            .collect::<Vec<_>>();
 
-        chunks.sort_unstable_by(|a, b| {
-            origin
-                .as_vec2()
-                .distance_squared(a.as_vec2())
-                .total_cmp(&origin.as_vec2().distance_squared(b.as_vec2()))
-        });
+        for origin in self.chunk_renderer.filter_by_shape(origin, settings.render_shape) {
+            self.chunk_manager.stages.insert(origin, ChunkStage::Lighted);
+        }
 
-        for origin in chunks {
-            match unsafe { self.chunk_manager.stages.get(&origin).unwrap_unchecked() } {
-                ChunkStage::Bare
+        for origin in settings.render_shape.iter_from_center(origin) {
+            match self.chunk_manager.stages.get(&origin) {
+                Some(ChunkStage::Bare)
                     if self.chunk_manager.neighbours_at_least(origin, ChunkStage::Bare)
                         && !self.job_manager.jobs.contains(&origin)
                         && self.chunk_manager.neighbours_of(origin).all(|origin| !self.job_manager.jobs.contains(&origin)) =>
@@ -831,7 +824,7 @@ impl World {
 
                     queue.push((origin, ChunkStage::PopulationInProgress));
                 }
-                ChunkStage::Populated
+                Some(ChunkStage::Populated)
                     if self.chunk_manager.neighbours_at_least(origin, ChunkStage::Populated)
                         && !self.job_manager.jobs.contains(&origin)
                         && self.chunk_manager.neighbours_of(origin).all(|origin| !self.job_manager.jobs.contains(&origin)) =>
@@ -850,7 +843,7 @@ impl World {
 
                     queue.push((origin, ChunkStage::LightingInProgress));
                 }
-                ChunkStage::Lighted
+                Some(ChunkStage::Lighted)
                     if self.chunk_manager.neighbours_at_least(origin, ChunkStage::Lighted)
                         && !self.job_manager.jobs.contains(&origin)
                         && self.chunk_manager.neighbours_of(origin).all(|origin| !self.job_manager.jobs.contains(&origin)) =>
@@ -863,7 +856,7 @@ impl World {
 
                     queue.push((origin, ChunkStage::MeshingInProgress));
                 }
-                ChunkStage::Meshed
+                Some(ChunkStage::Meshed)
                     if self.chunk_manager.neighbours_at_least(origin, ChunkStage::Lighted)
                         && self.chunk_manager.get_chunk(origin).is_some_and(|chunk| chunk.dirty)
                         && !self.job_manager.jobs.contains(&origin) =>
@@ -876,7 +869,7 @@ impl World {
 
                     queue.push((origin, ChunkStage::MeshingInProgress));
                 }
-                _ => {}
+                _ => (),
             }
         }
 
