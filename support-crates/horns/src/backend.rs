@@ -166,12 +166,22 @@ impl RenderBackend {
     pub fn get_free_video_memory(&self) -> Option<usize> {
         let extensions = self.gl.supported_extensions();
 
+        println!("got extensions");
+
         if extensions.contains("GL_NVX_gpu_memory_info") {
+            println!("GL_NVX_gpu_memory_info");
+
             let value = unsafe { self.gl.get_parameter_i32(0x9049) };
+
+            println!("GL_NVX_gpu_memory_info value");
 
             Some(value as usize * 1024)
         } else if extensions.contains("GL_ATI_meminfo") {
+            println!("GL_ATI_meminfo");
+
             let value = unsafe { self.gl.get_parameter_i32(0x87FC) };
+
+            println!("GL_ATI_meminfo value");
 
             Some(value as usize * 1024)
         } else {

@@ -674,8 +674,8 @@ impl State for GameLoop {
                 let vendor = backend.get_opengl_vendor_string();
 
                 info!("debug info: got opengl vendor string");
-                
-                let free_memory =                     backend.get_free_video_memory().map_or_else(|| String::from("unknown"), util::format_bytes);
+
+                let free_memory = backend.get_free_video_memory().map_or_else(|| String::from("unknown"), util::format_bytes);
 
                 info!("debug info: got opengl free memory string");
 
@@ -707,7 +707,7 @@ impl State for GameLoop {
                                 )))
                         )
                         .unwrap_or_else(|| String::from("nothing"));
-                
+
                 info!("debug info: got looking at");
 
                 let total_subchunks = world.chunk_manager.len() * SUBCHUNK_COUNT;
