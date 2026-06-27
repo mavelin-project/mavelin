@@ -667,23 +667,19 @@ impl State for GameLoop {
                 let version = backend.get_opengl_version_string();
                 info!("debug info: got opengl version string");
 
-                let total_subchunks = world.chunk_manager.len() * SUBCHUNK_COUNT;
+                let renderer = backend.get_opengl_renderer_string();
 
-                info!("debug info: got total subchunks");
+                info!("debug info: got opengl renderer string");
 
-                let text = format!(
-                    "OpenGL {version}
-OpenGL Renderer: {}
-OpenGL Vendor: {}
-Free GPU memory: {}
-Window size: {width}x{height}
-Game Time: {hours:02}:{minutes:02}
-Looking at {}
-Rendered subchunks: {} / {total_subchunks}",
-                    backend.get_opengl_renderer_string(),
-                    backend.get_opengl_vendor_string(),
-                    backend.get_free_video_memory().map_or_else(|| String::from("unknown"), util::format_bytes),
-                    world
+                let vendor = backend.get_opengl_vendor_string();
+
+                info!("debug info: got opengl vendor string");
+                
+                let free_memory =                     backend.get_free_video_memory().map_or_else(|| String::from("unknown"), util::format_bytes);
+
+                info!("debug info: got opengl free memory string");
+
+                let block =                     world
                         .camera
                         .looking_at
                         .and_then(
@@ -710,7 +706,23 @@ Rendered subchunks: {} / {total_subchunks}",
                                     }
                                 )))
                         )
-                        .unwrap_or_else(|| String::from("nothing")),
+                        .unwrap_or_else(|| String::from("nothing"));
+                
+                info!("debug info: got looking at");
+
+                let total_subchunks = world.chunk_manager.len() * SUBCHUNK_COUNT;
+
+                info!("debug info: got total subchunks");
+
+                let text = format!(
+                    "OpenGL {version}
+OpenGL Renderer: {renderer}
+OpenGL Vendor: {vendor}
+Free GPU memory: {free_memory}
+Window size: {width}x{height}
+Game Time: {hours:02}:{minutes:02}
+Looking at {block}
+Rendered subchunks: {} / {total_subchunks}",
                     rendered_subchunks.draw_calls
                 );
 
