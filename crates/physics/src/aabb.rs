@@ -3,17 +3,15 @@ use meralus_shared::{Cube3D, DPoint3D, DSize3D, Face};
 use crate::raycast::RayCastResult;
 
 fn get_intermediate_with_x_value(a: DPoint3D, b: DPoint3D, x: f64) -> Option<DPoint3D> {
-    let d0 = b.x - a.x;
-    let d1 = b.y - a.y;
-    let d2 = b.z - a.z;
+    let diff = b - a;
 
-    if d0 * d0 < 1.000_000_011_686_097_4E-7 {
+    if diff.x * diff.x < 1.000_000_011_686_097_4E-7 {
         None
     } else {
-        let d3 = (x - a.x) / d0;
+        let f = (x - a.x) / diff.x;
 
-        if (0.0..=1.0).contains(&d3) {
-            Some(DPoint3D::new(d0.mul_add(d3, a.x), d1.mul_add(d3, a.y), d2.mul_add(d3, a.z)))
+        if (0.0..=1.0).contains(&f) {
+            Some(DPoint3D::new(diff.x.mul_add(f, a.x), diff.x.mul_add(f, a.y), diff.x.mul_add(f, a.z)))
         } else {
             None
         }
@@ -21,17 +19,15 @@ fn get_intermediate_with_x_value(a: DPoint3D, b: DPoint3D, x: f64) -> Option<DPo
 }
 
 fn get_intermediate_with_y_value(a: DPoint3D, b: DPoint3D, y: f64) -> Option<DPoint3D> {
-    let d0 = b.x - a.x;
-    let d1 = b.y - a.y;
-    let d2 = b.z - a.z;
+    let diff = b - a;
 
-    if d1 * d1 < 1.000_000_011_686_097_4E-7 {
+    if diff.y * diff.y < 1.000_000_011_686_097_4E-7 {
         None
     } else {
-        let d3 = (y - a.y) / d1;
+        let f = (y - a.y) / diff.y;
 
-        if (0.0..=1.0).contains(&d3) {
-            Some(DPoint3D::new(d0.mul_add(d3, a.x), d1.mul_add(d3, a.y), d2.mul_add(d3, a.z)))
+        if (0.0..=1.0).contains(&f) {
+            Some(DPoint3D::new(diff.y.mul_add(f, a.x), diff.y.mul_add(f, a.y), diff.y.mul_add(f, a.z)))
         } else {
             None
         }
@@ -39,17 +35,15 @@ fn get_intermediate_with_y_value(a: DPoint3D, b: DPoint3D, y: f64) -> Option<DPo
 }
 
 fn get_intermediate_with_z_value(a: DPoint3D, b: DPoint3D, z: f64) -> Option<DPoint3D> {
-    let d0 = b.x - a.x;
-    let d1 = b.y - a.y;
-    let d2 = b.z - a.z;
+    let diff = b - a;
 
-    if d2 * d2 < 1.000_000_011_686_097_4E-7 {
+    if diff.z * diff.z < 1.000_000_011_686_097_4E-7 {
         None
     } else {
-        let d3 = (z - a.z) / d2;
+        let f = (z - a.z) / diff.z;
 
-        if (0.0..=1.0).contains(&d3) {
-            Some(DPoint3D::new(d0.mul_add(d3, a.x), d1.mul_add(d3, a.y), d2.mul_add(d3, a.z)))
+        if (0.0..=1.0).contains(&f) {
+            Some(DPoint3D::new(diff.x.mul_add(f, a.x), diff.y.mul_add(f, a.y), diff.z.mul_add(f, a.z)))
         } else {
             None
         }
@@ -190,7 +184,7 @@ impl Aabb {
         if b.is_some_and(|b| Self::is_closest(vec_a, a, b)) {
             a = b;
 
-            facing_at = Face::Front;
+            facing_at = Face::Back;
         }
 
         b = self.collide_with_z_plane(self.max.z, vec_a, vec_b);
@@ -198,7 +192,7 @@ impl Aabb {
         if b.is_some_and(|b| Self::is_closest(vec_a, a, b)) {
             a = b;
 
-            facing_at = Face::Back;
+            facing_at = Face::Front;
         }
 
         a.map(|vec3d| RayCastResult::new2(vec3d, facing_at))
