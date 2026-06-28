@@ -34,7 +34,7 @@ use crate::{
     util::get_sky_color,
 };
 
-pub const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.5, 0.75);
+pub const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.525, 0.525);
 
 #[non_exhaustive]
 pub enum EntityData {

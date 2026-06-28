@@ -1,6 +1,7 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 use std::{
+    cell::Cell,
     fs::File,
     io::BufReader,
     time::{Duration, Instant},
@@ -24,11 +25,12 @@ pub use winit::{event::MouseButton, keyboard::KeyCode, window::CursorGrabMode};
 pub struct WindowContext<'a> {
     event_loop: &'a dyn ActiveEventLoop,
     window: &'a dyn Window,
+    vsync: &'a Cell<bool>,
 }
 
 impl<'a> WindowContext<'a> {
-    const fn new(event_loop: &'a dyn ActiveEventLoop, window: &'a dyn Window) -> Self {
-        Self { event_loop, window }
+    const fn new(event_loop: &'a dyn ActiveEventLoop, window: &'a dyn Window, vsync: &'a Cell<bool>) -> Self {
+        Self { event_loop, window, vsync }
     }
 
     #[allow(clippy::missing_panics_doc)]
@@ -38,6 +40,10 @@ impl<'a> WindowContext<'a> {
 
     pub fn set_cursor_visible(&self, visible: bool) {
         self.window.set_cursor_visible(visible);
+    }
+
+    pub fn set_vsync(&self, enabled: bool) {
+        self.vsync.set(enabled);
     }
 
     pub fn window_size(&self) -> USize2D {
@@ -93,6 +99,8 @@ pub struct ApplicationWindow<T: State> {
     window: Box<dyn Window>,
     backend: RenderBackend,
     last_time: Option<Instant>,
+    vsync: bool,
+    refresh_rate: Duration,
 }
 
 pub struct Application<T: State> {
@@ -133,6 +141,8 @@ impl<T: State> ApplicationWindow<T> {
     #[must_use]
     #[allow(clippy::missing_panics_doc)]
     pub fn new(event_loop: &dyn ActiveEventLoop, args: T::Args) -> Self {
+        const FALLBACK_RATE: Duration = Duration::from_secs(1).checked_div(60).unwrap();
+
         let icon = T::ICON.and_then(|icon| {
             let decoder = png::Decoder::new(BufReader::new(File::open(icon).unwrap()));
             let mut reader = decoder.read_info().unwrap();
@@ -146,12 +156,21 @@ impl<T: State> ApplicationWindow<T> {
         let window = event_loop.create_window(window_attrs).expect("failed to create window");
         let (width, height): (u32, u32) = window.surface_size().into();
         let backend = RenderBackend::new(window.display_handle().unwrap(), window.window_handle().unwrap(), width, height).unwrap();
+        let refresh_rate = window
+            .current_monitor()
+            .and_then(|monitor| monitor.current_video_mode())
+            .and_then(|video_mode| video_mode.refresh_rate_millihertz())
+            .and_then(|refresh_rate| Duration::from_secs(1).checked_div(refresh_rate.get() / 1000))
+            .unwrap_or(FALLBACK_RATE);
+        let vsync = Cell::new(true);
 
         Self {
-            state: T::new(WindowContext::new(event_loop, window.as_ref()), &backend, args),
+            state: T::new(WindowContext::new(event_loop, window.as_ref(), &vsync), &backend, args),
             window,
             backend,
             last_time: None,
+            vsync: vsync.get(),
+            refresh_rate,
         }
     }
 }
@@ -226,24 +245,23 @@ impl<T: State> ApplicationHandler for Application<T> {
                 });
             }
             WindowEvent::RedrawRequested => self.window.inspect_mut(|window| {
-                const SLEEP_INTERVAL: Duration = Duration::from_secs(1).checked_div(60).unwrap();
-
                 let now = Instant::now();
                 let delta = now.duration_since(window.last_time.unwrap_or_else(Instant::now));
 
                 window.last_time.replace(now);
 
-                let context = WindowContext::new(event_loop, window.window.as_ref());
+                let vsync = Cell::new(window.vsync);
+                let context = WindowContext::new(event_loop, window.window.as_ref(), &vsync);
 
                 window.state.update(context, &window.backend, delta);
                 window.state.render(context, &window.backend, delta);
-
                 window.window.request_redraw();
+                window.vsync = vsync.get();
 
                 let frame_time = now.elapsed();
 
-                if SLEEP_INTERVAL > frame_time {
-                    std::thread::sleep(SLEEP_INTERVAL.checked_sub(frame_time).unwrap());
+                if window.vsync && window.refresh_rate > frame_time {
+                    std::thread::sleep(window.refresh_rate.checked_sub(frame_time).unwrap());
                 }
             }),
             WindowEvent::CloseRequested => event_loop.exit(),

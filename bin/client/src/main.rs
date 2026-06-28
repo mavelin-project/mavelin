@@ -110,7 +110,7 @@ fn register_block<T: Block + 'static>(
 }
 
 impl GameLoop {
-    fn handle_shortcuts(&mut self, context: WindowContext, backend: &RenderBackend) {
+    fn handle_shortcuts(&mut self, context: WindowContext, _: &RenderBackend) {
         if self.input.keyboard.is_key_pressed_once(KeyCode::F3) {
             self.settings.debugging.enabled = !self.settings.debugging.enabled;
         }
@@ -154,7 +154,7 @@ impl GameLoop {
 
         if self.input.keyboard.modifiers.control_key {
             if self.input.keyboard.is_key_pressed_once(KeyCode::KeyV) {
-                backend.set_vsync(!self.settings.graphics.vsync).unwrap();
+                context.set_vsync(!self.settings.graphics.vsync);
 
                 self.settings.graphics.vsync = !self.settings.graphics.vsync;
             }

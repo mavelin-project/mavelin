@@ -64,8 +64,6 @@ impl RenderBackend {
 
         let context = context.make_current(&surface)?;
 
-        surface.set_swap_interval(&context, glutin::surface::SwapInterval::Wait(unsafe { NonZeroU32::new_unchecked(1) }))?;
-
         Ok(Self {
             gl: Rc::new(unsafe { glow::Context::from_loader_function_cstr(|addr| display.get_proc_address(addr)) }),
             surface,
