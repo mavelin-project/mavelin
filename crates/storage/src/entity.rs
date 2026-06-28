@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use meralus_io::{EntityElementData, EntityModel, TexturePath, TextureRef};
 use meralus_physics::Aabb;
-use meralus_shared::{DPoint3D, Face, Point2D, Vector2D};
+use meralus_shared::{DPoint3D, Face, Point2D, Point3D, Vector2D};
 use meralus_world::new_boxed_array;
 use tracing::info;
 
@@ -11,6 +11,7 @@ use crate::{FaceData, FaceUV, LoadingError, LoadingResult, Mappings, ModelLoadin
 #[derive(Debug)]
 pub struct BakedEntityModelElement {
     pub cube: Aabb,
+    pub pivot: Point3D,
     pub faces: Box<[FaceData; 6]>,
 }
 
@@ -73,34 +74,36 @@ impl EntityModelStorage {
             .elements
             .into_iter()
             .map(|element| {
-                let EntityElementData::Cube { start, end, mut faces } = element.data;
+                let EntityElementData::Cube { start, end, pivot, mut faces } = element.data;
                 let min = start / 48.0;
                 let max = end / 48.0;
                 let cube = Aabb::new(min.as_dvec3(), max.as_dvec3());
 
                 if let Some(bounding_box) = &mut bounding_box {
-                    bounding_box.min = bounding_box.min.min(min.as_dvec3());
-                    bounding_box.max = bounding_box.max.max(max.as_dvec3());
+                    *bounding_box = bounding_box.min_max(cube);
                 } else {
-                    bounding_box.replace(Aabb::new(min.as_dvec3(), max.as_dvec3()));
+                    bounding_box.replace(cube);
                 }
 
                 BakedEntityModelElement {
                     cube,
+                    pivot: pivot.map_or(min + (max - min) / 2.0, |pivot| pivot / 48.0),
                     faces: new_boxed_array(
                         Face::ALL
                             .into_iter()
                             .map(|face| {
                                 let data = faces.remove(&face).unwrap();
-                                let (offset, ..) = if let TextureRef::Path(path) = &block.texture.path {
+                                let (offset, size, _) = if let TextureRef::Path(path) = &block.texture.path {
                                     textures.get_texture(path.1.file_stem().unwrap().to_string_lossy()).unwrap()
                                 } else {
                                     (Point2D::ZERO, Vector2D::ZERO, 0)
                                 };
 
+                                let origin = data.origin / f32::from(TextureStorage::ATLAS_SIZE);
+                                let scale = data.size / f32::from(TextureStorage::ATLAS_SIZE);
                                 let uv = FaceUV {
-                                    offset: offset + data.from / f32::from(TextureStorage::ATLAS_SIZE),
-                                    scale: ((data.to - data.from) / f32::from(TextureStorage::ATLAS_SIZE)),
+                                    offset: offset + origin.with_y(size.y - origin.y) - scale.with_x(0.0),
+                                    scale,
                                 };
 
                                 FaceData::new(face, cube, uv, None)

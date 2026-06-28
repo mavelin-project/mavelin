@@ -86,7 +86,7 @@ impl Camera {
 
     #[inline]
     pub fn projection(&self) -> Transform3D {
-        Transform3D::perspective_rh_gl(self.fov, self.aspect_ratio, self.z_near, self.z_far)
+        Transform3D::perspective_rh(self.fov, self.aspect_ratio, self.z_near, self.z_far)
     }
 
     #[inline]

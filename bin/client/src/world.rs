@@ -6,28 +6,32 @@ use std::{
 };
 
 use ahash::{HashMap, HashSet};
-use horns::RenderBackend;
+use horns::{RenderBackend, RenderInfo, RenderPass, SampledTexture2d};
 #[cfg(feature = "multiplayer")]
 use meralus_network::{IncomingPacket, OutgoingPacket, Uuid};
 use meralus_physics::{Aabb, PhysicsBody, PhysicsContext};
-use meralus_shared::{Color, Face, IPoint2D, IPoint3D, Point2D, Point3D, Ranged, Size3D, Transform3D, USizePoint3D, Vector3D};
+use meralus_shared::{Color, Face, IPoint2D, IPoint3D, Point2D, Point3D, Ranged, Rect, Size2D, Size3D, Transform3D, USize2D, USizePoint3D, Vector2D, Vector3D};
 use meralus_storage::Block;
 use meralus_tween::{RepeatMode, Tween};
 use meralus_world::{
-    BfsLight, CHUNK_HEIGHT, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, LocalChunkManager, SUBCHUNK_COUNT, SUBCHUNK_SIZE,
+    BfsLight, BlockSource, CHUNK_HEIGHT, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, LocalChunkManager, SUBCHUNK_COUNT, SUBCHUNK_SIZE,
     SubChunkBlockState,
 };
 use meralus_worldgen::ChunkGenerator;
 use tracing::info;
 
 use crate::{
-    Camera, INVENTORY_HOTBAR_SLOTS, Interval, Item, PHYSICS_RATE, PlayerController, ResourceStorage, TICK_RATE,
+    Camera, Interval, Item, PHYSICS_RATE, Player, ResourceStorage, TICK_RATE,
     clock::Clock,
     input::Input,
     physics::{AabbProvider, LimitedAabbProvider},
     player::ItemType,
-    render::chunk::{ChunkRenderer, TranslucentSubchunk, VoxelFace, VoxelMeshBuilder},
-    settings::GraphicsSettings,
+    render::{
+        chunk::{ChunkRenderer, TranslucentSubchunk, VoxelFace, VoxelMeshBuilder},
+        common::CommonRenderer,
+    },
+    settings::{Debugging, GraphicsSettings, Settings},
+    util::get_sky_color,
 };
 
 pub const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.5, 0.75);
@@ -35,7 +39,7 @@ pub const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.5, 0.75);
 #[non_exhaustive]
 pub enum EntityData {
     Item { item: Item, transition: Tween<f32> },
-    Model { id: usize, rotations: Vec<Vector3D> },
+    Model { id: usize, rotations: Vec<(Vector3D, Vector3D)> },
 }
 
 pub struct Entity {
@@ -64,10 +68,20 @@ impl Entity {
     pub fn set_rotation(&mut self, i: usize, vector: Vector3D) {
         if let EntityData::Model { rotations, .. } = &mut self.data {
             if rotations.len() <= i {
-                rotations.resize(i + 1, Vector3D::ZERO);
+                rotations.resize(i + 1, (Vector3D::ZERO, Vector3D::ZERO));
             }
 
-            rotations[i] = vector;
+            rotations[i].0 = vector;
+        }
+    }
+
+    pub fn set_translation(&mut self, i: usize, vector: Vector3D) {
+        if let EntityData::Model { rotations, .. } = &mut self.data {
+            if rotations.len() <= i {
+                rotations.resize(i + 1, (Vector3D::ZERO, Vector3D::ZERO));
+            }
+
+            rotations[i].1 = vector;
         }
     }
 
@@ -143,21 +157,11 @@ impl Entity {
                         let vertices = rotations.get(i).map_or(face_data.vertices, |rotation| {
                             let mut matrix = Transform3D::IDENTITY;
 
-                            if rotation.x > 0.0 {
-                                matrix *= Transform3D::from_rotation_x(rotation.x);
-                            }
+                            matrix *= Transform3D::from_rotation_x(rotation.0.x);
+                            matrix *= Transform3D::from_rotation_y(rotation.0.y);
+                            matrix *= Transform3D::from_rotation_z(rotation.0.z);
 
-                            if rotation.y > 0.0 {
-                                matrix *= Transform3D::from_rotation_y(rotation.y);
-                            }
-
-                            if rotation.z > 0.0 {
-                                matrix *= Transform3D::from_rotation_z(rotation.z);
-                            }
-
-                            let center = element.cube.min.as_vec3() + element.cube.size().as_vec3() / 2.0;
-
-                            face_data.vertices.map(|v| matrix.transform_point3(v - center) + center)
+                            face_data.vertices.map(|v| matrix.transform_point3(v - element.pivot) + element.pivot)
                         });
 
                         builder.push(&VoxelFace {
@@ -454,7 +458,7 @@ pub struct World {
     pub physics_interval: Interval,
 
     pub camera: Camera,
-    pub player: PlayerController,
+    pub player: Player,
     pub inventory_slot: Ranged<u8>,
 
     pub chunk_manager: ChunkManager<ChunkFileCache>,
@@ -477,7 +481,7 @@ pub struct World {
 
 impl World {
     pub fn new(backend: &RenderBackend, resource_storage: Arc<ResourceStorage>, chunk_manager: ChunkManager<ChunkFileCache>, ty: WorldType) -> Self {
-        let mut player = PlayerController::default();
+        let mut player = Player::default();
 
         player.body.position = Point3D::new(2.0, 135.0, 2.0);
 
@@ -487,7 +491,7 @@ impl World {
             tick_interval: Interval::new(TICK_RATE),
             physics_interval: Interval::new(PHYSICS_RATE),
             player,
-            inventory_slot: Ranged::new(0, 0, INVENTORY_HOTBAR_SLOTS),
+            inventory_slot: Ranged::new(0, 0, 8),
             clock: Clock::default(),
             chunk_manager,
             job_manager: JobManager::new(),
@@ -738,10 +742,6 @@ impl World {
         if self.clock.active() {
             for _ in 0..self.physics_interval.update(delta) {
                 self.physics_step(input);
-
-                if let Some(entity) = self.entities.get_mut(0) {
-                    entity.set_rotation(0, self.player.get_vector_for_rotation().as_vec3());
-                }
             }
 
             for _ in 0..self.tick_interval.update(delta) {
@@ -924,6 +924,459 @@ impl World {
                 }
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &mut self,
+        backend: &RenderBackend,
+        pass: &mut RenderPass,
+        common_renderer: &mut CommonRenderer,
+        texture_atlas: SampledTexture2d,
+        lightmap_atlas: SampledTexture2d,
+        surface_size: USize2D,
+        settings: &Settings,
+        info: RenderInfo,
+        delta: Duration,
+    ) {
+        // self.scene.buffer(backend);
+
+        let progress = self.clock.get_progress();
+
+        self.chunk_renderer
+            .set_sun_position(if progress > 0.5 { 1.0 - progress } else { progress } * 2.0);
+
+        pass.clear_color_and_depth(Color::BLACK.to_linear_rgba(), 1.0);
+
+        let sky_color = get_sky_color(self.clock.get_visual_progress(), 0.0);
+
+        common_renderer.draw_rect(Point2D::ZERO, surface_size.as_vec2(), sky_color);
+        common_renderer.render(pass, backend, None, surface_size);
+
+        self.chunk_renderer.set_fog_color(sky_color);
+
+        let rendered_subchunks = self.chunk_renderer.render(
+            pass,
+            self.camera.position,
+            &self.camera.frustum,
+            self.camera.matrix(),
+            texture_atlas,
+            lightmap_atlas,
+        );
+
+        let mut builder = VoxelMeshBuilder::with_capacity(self.entities.len());
+
+        for (_, entity) in &self.entities {
+            entity.render_to(&mut builder, &self.chunk_manager, self.resource_storage.as_ref());
+        }
+
+        builder.render(backend, &self.chunk_renderer, pass, self.camera.world_matrix(), texture_atlas, lightmap_atlas);
+
+        // self.kawase.apply(backend, &self.scene).unwrap();
+
+        // self.scene.render(&mut frame).unwrap();
+        // self.particles.render(&mut frame, self.camera.matrix()).unwrap();
+
+        if self.is_underwater(self.player.camera_position()) {
+            common_renderer.draw_rect(Point2D::ZERO, surface_size.as_vec2(), Color::from_hsl(215.0, 1.0, 0.6).with_alpha(0.5));
+        }
+
+        self.render_hotbar(backend, pass, texture_atlas, lightmap_atlas, common_renderer, surface_size);
+
+        if settings.debugging.enabled {
+            self.render_debug_text(common_renderer, backend, settings.graphics, rendered_subchunks.draw_calls, surface_size);
+            self.render_chunk_map(common_renderer, surface_size);
+
+            Self::render_fps_stat(common_renderer, &settings.debugging, delta, surface_size);
+            Self::render_draw_calls_stat(common_renderer, &settings.debugging, info, surface_size);
+        } else {
+            common_renderer.draw_text(
+                Point2D::new(8.0, 4.0),
+                "default",
+                "Press F3 to view debug information.",
+                Color::WHITE,
+                18.0,
+                None,
+            );
+        }
+
+        common_renderer.render(pass, backend, None, surface_size);
+    }
+
+    #[inline]
+    fn is_underwater(&self, position: Point3D) -> bool {
+        self.chunk_manager
+            .get_block(position.floor().as_ivec3())
+            .is_some_and(|block| block.id == self.resource_storage.get_block_id("game:water"))
+    }
+
+    fn render_chunk_map(&self, context: &mut CommonRenderer, surface_size: USize2D) {
+        const CHUNK_UI_CONTAINER_SIZE: Size2D = Size2D::new(128.0, 128.0);
+        const CHUNK_UI_COUNT: usize = 16;
+        const SPACING: f32 = 1.0;
+        const CHUNK_UI_SIZE: Size2D = Size2D::new(
+            (CHUNK_UI_CONTAINER_SIZE.x - SPACING * (CHUNK_UI_COUNT - 1) as f32) / CHUNK_UI_COUNT as f32,
+            (CHUNK_UI_CONTAINER_SIZE.y - SPACING * (CHUNK_UI_COUNT - 1) as f32) / CHUNK_UI_COUNT as f32,
+        );
+
+        let container_origin = Point2D::new(surface_size.as_vec2().x - CHUNK_UI_CONTAINER_SIZE.x - 12.0, 12.0);
+        let bounds = Rect::new(container_origin, CHUNK_UI_CONTAINER_SIZE);
+
+        context.draw_rect(bounds.origin, bounds.size, Color::BLACK);
+
+        let player_chunk = ChunkManager::<()>::to_local(self.player.body.position.as_ivec3());
+        let origin = bounds.origin + CHUNK_UI_COUNT as f32 * CHUNK_UI_SIZE / 2.0;
+
+        for x in 0..CHUNK_UI_COUNT as i32 {
+            let x = x - (CHUNK_UI_COUNT / 2) as i32;
+
+            for z in 0..CHUNK_UI_COUNT as i32 {
+                let z = z - (CHUNK_UI_COUNT / 2) as i32;
+                let xz = IPoint2D::new(x, z);
+                let chunk = player_chunk + xz;
+
+                if let Some(stage) = self.chunk_manager.stages.get(&chunk) {
+                    let color = match stage {
+                        ChunkStage::Unloaded => continue,
+                        ChunkStage::Bare => Color::new(150, 150, 150, 255),
+                        ChunkStage::PopulationInProgress => Color::from_u32_rgb(0x73AF73),
+                        ChunkStage::Populated => Color::GREEN,
+                        ChunkStage::LightingInProgress => Color::from_u32_rgb(0xB8FF00),
+                        ChunkStage::Lighted => Color::YELLOW,
+                        ChunkStage::MeshingInProgress => Color::from_u32_rgb(0x63639C),
+                        ChunkStage::Meshed => Color::BLUE,
+                    };
+
+                    context.draw_rect(origin - xz.as_vec2() * (CHUNK_UI_SIZE + 1.0), CHUNK_UI_SIZE, color);
+                }
+            }
+        }
+
+        context.draw_rect(container_origin + bounds.size / 2.0 - Vector2D::splat(1.0), Size2D::splat(2.0), Color::RED);
+
+        let text = context
+            .measure(
+                "default",
+                format!(
+                    "{} {} {}",
+                    self.player.body.position.x as i32, self.player.body.position.y as i32, self.player.body.position.z as i32
+                ),
+                9.0,
+                None,
+            )
+            .unwrap_or_default();
+        let new_container_origin = container_origin + CHUNK_UI_CONTAINER_SIZE.with_x((CHUNK_UI_CONTAINER_SIZE.x - text.x) / 2.0) + Point2D::new(0.0, 2.0);
+
+        context.draw_rect(new_container_origin, Size2D::new(text.x + 8.0, 20.0), Color::from_u32_rgb(0x1D211B));
+        context.draw_text(
+            new_container_origin + Point2D::splat(4.0),
+            "default",
+            format!(
+                "{} {} {}",
+                self.player.body.position.x as i32, self.player.body.position.y as i32, self.player.body.position.z as i32
+            ),
+            Color::from_hsl(110.0, 0.5, 0.8),
+            9.0,
+            None,
+        );
+
+        let text = context
+            .measure(
+                "default",
+                format!("{:?}", self.chunk_manager.get_biome(self.player.body.position.as_ivec3())),
+                9.0,
+                None,
+            )
+            .unwrap_or_default();
+        let new_container_origin = container_origin + CHUNK_UI_CONTAINER_SIZE.with_x((CHUNK_UI_CONTAINER_SIZE.x - text.x) / 2.0) + Point2D::new(0.0, 24.0);
+
+        context.draw_rect(new_container_origin, Size2D::new(text.x + 8.0, 20.0), Color::from_u32_rgb(0x1D211B));
+        context.draw_text(
+            new_container_origin + Point2D::splat(4.0),
+            "default",
+            format!("{:?}", self.chunk_manager.get_biome(self.player.body.position.as_ivec3())),
+            Color::from_hsl(110.0, 0.5, 0.8),
+            9.0,
+            None,
+        );
+    }
+
+    fn render_debug_text(
+        &self,
+        context: &mut CommonRenderer,
+        backend: &RenderBackend,
+        GraphicsSettings { render_shape, vsync, .. }: GraphicsSettings,
+        rendered_subchunks: usize,
+        USize2D { x, y }: USize2D,
+    ) {
+        let (hours, minutes) = {
+            let time = self.clock.time().as_secs();
+            let seconds = time % 60;
+            let minutes = (time - seconds) / 60 % 60;
+            let hours = (time - seconds - minutes * 60) / 60 / 60;
+
+            (hours, minutes)
+        };
+
+        let version = backend.get_opengl_version_string();
+        let renderer = backend.get_opengl_renderer_string();
+        let vendor = backend.get_opengl_vendor_string();
+        let free_memory = backend
+            .get_free_video_memory()
+            .map_or_else(|| String::from("unknown"), crate::util::format_bytes);
+
+        let block = self
+            .camera
+            .looking_at
+            .and_then(|result| Some((result, self.chunk_manager.get_block(result.position)?)))
+            .filter(|(_, state)| !state.is_air())
+            .and_then(|(result, state)| Some((result, state, self.resource_storage.blocks.get(state.id)?)))
+            .map_or_else(
+                || String::from("nothing"),
+                |(result, state, block)| {
+                    format!(
+                        "{} ({}){}",
+                        block.id(),
+                        result.hit_side,
+                        if state.properties.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                ". Properties:\n{}",
+                                state
+                                    .properties
+                                    .iter()
+                                    .map(|(name, value)| format!("  #{name} = {value}"))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            )
+                        }
+                    )
+                },
+            );
+
+        let total_chunks = self.chunk_manager.len();
+        let total_subchunks = total_chunks * SUBCHUNK_COUNT;
+
+        let text = format!(
+            "OpenGL {version}
+OpenGL Renderer: {renderer}
+OpenGL Vendor: {vendor}
+Free GPU memory: {free_memory}
+Window size: {x}x{y}
+Game Time: {hours:02}:{minutes:02}
+Looking at {block}
+VSync: {vsync}
+Render Shape: {render_shape}
+Rendered subchunks: {rendered_subchunks} / {total_subchunks} ({total_chunks} total chunks)",
+        );
+
+        // let text_size = context.measure("default", &text, 18.0,
+        // None).unwrap_or_default(); let text_bounds =
+        // Rect::new(Point2D::new(12.0, 12.0), Size2D::new((522.0 +
+        // 4.0) * overlay_width, text_size.y + 4.0));
+
+        context.draw_text(Point2D::new(8.0, 4.0), "default", text, Color::WHITE, 18.0, None);
+    }
+
+    fn render_hotbar(
+        &self,
+        backend: &RenderBackend,
+        pass: &mut RenderPass,
+        texture_atlas: SampledTexture2d,
+        lightmap_atlas: SampledTexture2d,
+        context: &mut CommonRenderer,
+        surface_size: USize2D,
+    ) {
+        const INVENTORY_HOTBAR_SLOTS: u8 = 8;
+        const SLOT_SIZE: f32 = 48f32;
+
+        let bounds = Rect {
+            origin: Point2D::ZERO,
+            size: surface_size.as_vec2(),
+        };
+
+        let hotbar_width = f32::from(INVENTORY_HOTBAR_SLOTS + 1) * SLOT_SIZE;
+        let origin = Point2D::new((bounds.size.x / 2.0) - (hotbar_width / 2.0), bounds.size.y - SLOT_SIZE - 8.0);
+        let offset = f32::from(self.inventory_slot.value) * SLOT_SIZE;
+
+        context.draw_rect(origin, Size2D::new(hotbar_width, SLOT_SIZE), Color::from_u32_rgb(0x1D211B));
+        context.draw_rect(
+            origin + Point2D::new(offset, 0.0),
+            Size2D::new(SLOT_SIZE, SLOT_SIZE),
+            Color::from_hsl(110.0, 0.5, 0.8),
+        );
+
+        context.draw_rect(
+            origin + Point2D::new(2.0, 2.0) + Point2D::new(offset, 0.0),
+            Size2D::new(SLOT_SIZE - 4.0, SLOT_SIZE - 4.0),
+            Color::from_u32_rgb(0x1D211B),
+        );
+
+        context.render(pass, backend, None, surface_size);
+
+        let mut builder = VoxelMeshBuilder::with_capacity(self.player.inventory.get_hotbar_items().count());
+
+        let matrix = Transform3D::from_rotation_x(const { 200f32.to_radians() })
+            * Transform3D::from_rotation_y(const { 35f32.to_radians() })
+            * Transform3D::from_rotation_z(0.0);
+
+        for (i, item) in self.player.inventory.get_hotbar_items() {
+            const SIZE: f32 = SLOT_SIZE * 0.6;
+            const ORIGIN: Point3D = Point3D::new(SIZE / 2.0, SIZE / 2.0, SIZE / 2.0);
+            const HOTBAR_WIDTH: f32 = (INVENTORY_HOTBAR_SLOTS + 1) as f32 * SLOT_SIZE;
+
+            let model = self
+                .resource_storage
+                .models
+                .get_unchecked(self.resource_storage.blocks.get_model_by_name(item.id));
+
+            let origin = Point2D::new(
+                (bounds.size.x / 2.0) - (HOTBAR_WIDTH / 2.0) + ((SLOT_SIZE - SIZE) / 2.0),
+                bounds.size.y - SLOT_SIZE - 8.0 + ((SLOT_SIZE - SIZE) / 2.0),
+            );
+
+            let slot_offset = (origin + Point2D::new(i as f32 * SLOT_SIZE, 0.0)).extend(20.0);
+
+            for element in &model.elements {
+                for model_face in &element.faces {
+                    builder.push_transformed(
+                        &VoxelFace {
+                            position: slot_offset,
+                            vertices: model_face.face_data.vertices.map(|vertex| vertex * SIZE),
+                            lights: [240; 4],
+                            uvs: model_face.face_data.uvs,
+                            color: if model_face.tint { GRASS_COLOR } else { Color::WHITE }.multiply_rgb(model_face.face_data.face.get_light_level()),
+                        },
+                        &matrix,
+                        ORIGIN,
+                    );
+                }
+            }
+        }
+
+        builder.render_full_bright(backend, &self.chunk_renderer, pass, context.window_matrix(), texture_atlas, lightmap_atlas);
+
+        let hotbar_width = f32::from(INVENTORY_HOTBAR_SLOTS + 1) * SLOT_SIZE;
+        let origin = Point2D::new((bounds.size.x / 2.0) - (hotbar_width / 2.0), bounds.size.y - SLOT_SIZE - 8.0);
+
+        for (column, item) in self.player.inventory.get_hotbar_items() {
+            let offset = (column + 1) as f32 * SLOT_SIZE;
+            let text = format!("x{}", item.amount);
+
+            let text_size = context.measure("default", &text, 18.0, None).unwrap();
+
+            context.draw_text(
+                origin.with_y(bounds.size.y - 10.0 - 21.0) + Point2D::new(offset - 3.0 - text_size.x, 0.0),
+                "default",
+                text,
+                Color::from_hsl(110.0, 0.5, 0.8),
+                18.0,
+                None,
+            );
+        }
+
+        context.render(pass, backend, None, surface_size);
+    }
+
+    fn render_draw_calls_stat(context: &mut CommonRenderer, debugging: &Debugging, info: RenderInfo, surface_size: USize2D) {
+        const SPACING: f32 = 1.0;
+        const SIZE: Size2D = Size2D::new(100.0 * (2.0 + SPACING), 96.0);
+        const CONTAINER_SIZE: Size2D = Size2D::new(SIZE.x - SPACING, SIZE.y);
+        const ELEMENT_WIDTH: f32 = (SIZE.x - 100.0 * SPACING) / 100.0;
+
+        let bounds = Rect {
+            origin: Point2D::ZERO,
+            size: surface_size.as_vec2(),
+        };
+
+        let container_origin = bounds.origin + bounds.size - CONTAINER_SIZE - Point2D::splat(4.0);
+
+        context.draw_rect(container_origin, CONTAINER_SIZE, Color::from_u32_rgb(0x1D211B));
+
+        let mut x = 0.0;
+
+        for &stat in &debugging.draw_calls_stat {
+            let size = Size2D::new(ELEMENT_WIDTH, CONTAINER_SIZE.y * (stat as f32 / debugging.draw_calls_max as f32));
+
+            context.draw_rect(
+                container_origin + CONTAINER_SIZE.with_x(0.0) - size.with_x(-x),
+                size,
+                Color::from_hsl(110.0, 0.4, 0.7),
+            );
+
+            x += ELEMENT_WIDTH + SPACING;
+        }
+
+        let text = context
+            .measure("default", format!("draw calls: {}\nvertices: {}", info.draw_calls, info.vertices), 9.0, None)
+            .unwrap_or_default();
+
+        context.draw_rect(container_origin + Point2D::splat(4.0), text, Color::from_u32_rgb(0x1D211B));
+        context.draw_text(
+            container_origin + Point2D::splat(4.0),
+            "default",
+            format!("draw calls: {}\nvertices: {}", info.draw_calls, info.vertices),
+            Color::from_hsl(110.0, 0.5, 0.8),
+            9.0,
+            None,
+        );
+    }
+
+    fn render_fps_stat(context: &mut CommonRenderer, debugging: &Debugging, delta: Duration, surface_size: USize2D) {
+        const SPACING: f32 = 1.0;
+        const SIZE: Size2D = Size2D::new(100.0 * (2.0 + SPACING), 96.0);
+        const CONTAINER_SIZE: Size2D = Size2D::new(SIZE.x - SPACING, SIZE.y);
+        const ELEMENT_WIDTH: f32 = (SIZE.x - 100.0 * SPACING) / 100.0;
+
+        let bounds = Rect {
+            origin: Point2D::ZERO,
+            size: surface_size.as_vec2(),
+        };
+
+        context.draw_rect(
+            bounds.origin + bounds.size.with_x(4.0) - CONTAINER_SIZE.with_x(0.0) - Point2D::new(0.0, 4.0),
+            CONTAINER_SIZE,
+            Color::from_u32_rgb(0x1D211B),
+        );
+
+        let mut x = 0.0;
+
+        for stat in &debugging.fps_stat {
+            let size = Size2D::new(ELEMENT_WIDTH, CONTAINER_SIZE.y * (stat.as_secs_f32() / debugging.fps_max.as_secs_f32()));
+
+            context.draw_rect(
+                bounds.origin + bounds.size.with_x(4.0 + x) - size.with_x(0.0) - Point2D::new(0.0, 4.0),
+                size,
+                Color::from_hsl(110.0, 0.4, 0.7),
+            );
+
+            x += ELEMENT_WIDTH + SPACING;
+        }
+
+        let text = context
+            .measure(
+                "default",
+                format!("fps: {:.0} ({:.2}ms)", 1.0 / delta.as_secs_f32(), delta.as_secs_f32() * 1000.0),
+                9.0,
+                None,
+            )
+            .unwrap_or_default();
+
+        context.draw_rect(
+            bounds.origin + bounds.size.with_x(8.0) - CONTAINER_SIZE.with_x(0.0) - Point2D::new(0.0, 4.0),
+            text,
+            Color::from_u32_rgb(0x1D211B),
+        );
+
+        context.draw_text(
+            bounds.origin + bounds.size.with_x(8.0) - CONTAINER_SIZE.with_x(0.0) - Point2D::new(0.0, 4.0),
+            "default",
+            format!("fps: {:.0} ({:.2}ms)", 1.0 / delta.as_secs_f32(), delta.as_secs_f32() * 1000.0),
+            Color::from_hsl(110.0, 0.5, 0.8),
+            9.0,
+            None,
+        );
     }
 
     // #[allow(dead_code)]

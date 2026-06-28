@@ -74,6 +74,12 @@ impl Aabb {
     }
 
     #[inline]
+    #[must_use]
+    pub fn min_max(self, other: Self) -> Self {
+        Self::new(self.min.min(other.min), self.max.max(other.max))
+    }
+
+    #[inline]
     pub fn size(&self) -> DSize3D {
         self.max - self.min
     }

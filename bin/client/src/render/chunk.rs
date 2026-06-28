@@ -67,7 +67,7 @@ impl TranslucentSubchunk {
     }
 
     fn update(&mut self, last_pos: Point3D, origin: IPoint2D) {
-        if self.last_pos.distance_squared(last_pos) > 3.0 && !self.faces.is_empty() {
+        if self.last_pos.distance_squared(last_pos) > 2.0 && !self.faces.is_empty() {
             Self::resort_faces(&mut self.faces, last_pos, origin);
 
             let mut builder = VoxelMeshBuilder::new();
@@ -80,7 +80,6 @@ impl TranslucentSubchunk {
         }
     }
 
-    #[track_caller]
     fn resort_faces(faces: &mut [VoxelFace], last_pos: Point3D, origin: IPoint2D) {
         let origin = origin.as_vec2() * SUBCHUNK_SIZE_F32;
         let local_camera_pos = last_pos - Point3D::new(origin.x, 0.0, origin.y);
@@ -224,7 +223,7 @@ impl VoxelMeshBuilder {
 pub struct ChunkRenderer {
     pub shader: Program,
     subchunks: IndexMap<(IPoint2D, usize), RenderSubchunk>,
-    last_position: Point3D,
+    last_position: IPoint3D,
     sun_position: f32,
     fog_color: Color,
 }
@@ -235,7 +234,7 @@ impl ChunkRenderer {
         Self {
             shader: backend.create_program(&VoxelShader).unwrap(),
             subchunks: IndexMap::new(),
-            last_position: Point3D::NAN,
+            last_position: IPoint3D::ZERO,
             sun_position: 0.0,
             fog_color: Color::BLACK,
         }
@@ -342,27 +341,23 @@ impl ChunkRenderer {
         atlas: SampledTexture2d,
         lightmap: SampledTexture2d,
     ) -> RenderInfo {
-        if self.last_position.is_nan() || self.last_position.distance_squared(camera_pos) > 3.0 {
+        let pos = camera_pos.as_ivec3();
+
+        if self.last_position == IPoint3D::ZERO || self.last_position.distance_squared(pos) > 4 {
             self.subchunks.sort_unstable_by(|&a, _, &b, _| {
                 #[inline]
-                const fn center((pos, idx): (IPoint2D, usize)) -> Point3D {
-                    Point3D::new(
-                        pos.x as f32 * SUBCHUNK_SIZE_F32 + SUBCHUNK_SIZE_F32 * 0.5,
-                        idx as f32 * SUBCHUNK_SIZE_F32 + SUBCHUNK_SIZE_F32 * 0.5,
-                        pos.y as f32 * SUBCHUNK_SIZE_F32 + SUBCHUNK_SIZE_F32 * 0.5,
+                const fn center((pos, idx): (IPoint2D, usize)) -> IPoint3D {
+                    IPoint3D::new(
+                        pos.x * SUBCHUNK_SIZE_I32 + SUBCHUNK_SIZE_I32 / 2,
+                        idx as i32 * SUBCHUNK_SIZE_I32 + SUBCHUNK_SIZE_I32 / 2,
+                        pos.y * SUBCHUNK_SIZE_I32 + SUBCHUNK_SIZE_I32 / 2,
                     )
                 }
 
-                camera_pos.distance_squared(center(a)).total_cmp(&camera_pos.distance_squared(center(b))) // ascending — solid uses forward, translucent uses .rev()
+                pos.distance_squared(center(a)).cmp(&pos.distance_squared(center(b)))
             });
 
-            self.last_position = camera_pos;
-        }
-
-        for (&key, subchunk) in self.subchunks.iter_mut().rev() {
-            if Self::is_subchunk_visible(frustum, key) {
-                subchunk.translucent.update(camera_pos, key.0);
-            }
+            self.last_position = pos;
         }
 
         let mut render_info = RenderInfo::default();
@@ -376,10 +371,10 @@ impl ChunkRenderer {
             .with_uniform("with_tex", true)
             .with_uniform("with_fog", true)
             .with_uniform("fog_color", <[f32; 4]>::from_value(&self.fog_color))
-            .with_uniform("fog_env_start", SUBCHUNK_SIZE_F32)
-            .with_uniform("fog_env_end", SUBCHUNK_SIZE_F32 * 4.0)
+            .with_uniform("fog_env_start", SUBCHUNK_SIZE_F32 * 2.0)
+            .with_uniform("fog_env_end", SUBCHUNK_SIZE_F32 * 6.0)
             .with_uniform("fog_render_dist_start", SUBCHUNK_SIZE_F32 * 3.0)
-            .with_uniform("fog_render_dist_end", SUBCHUNK_SIZE_F32 * 5.0)
+            .with_uniform("fog_render_dist_end", SUBCHUNK_SIZE_F32 * 6.0)
             .with_uniform("camera_pos", camera_pos);
 
         pass.apply_params(DrawParams {
@@ -418,6 +413,8 @@ impl ChunkRenderer {
 
         for (&key, subchunk) in self.subchunks.iter_mut().rev() {
             if Self::is_subchunk_visible(frustum, key) && !subchunk.translucent.buffer.indices.is_empty() {
+                subchunk.translucent.update(camera_pos, key.0);
+
                 binder.set_uniform("chunk", IPoint3D::new(key.0.x * SUBCHUNK_SIZE_I32, 0, key.0.y * SUBCHUNK_SIZE_I32));
 
                 pass.draw_elements(&subchunk.translucent.buffer.vertices, &subchunk.translucent.buffer.indices);

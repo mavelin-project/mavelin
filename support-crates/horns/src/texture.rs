@@ -130,6 +130,7 @@ impl Drop for Texture2d {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum MinifyFilter {
     Nearest,
     Linear,
@@ -141,7 +142,7 @@ pub enum MinifyFilter {
 
 impl MinifyFilter {
     #[inline]
-    const fn as_gl(&self) -> u32 {
+    const fn as_gl(self) -> u32 {
         match self {
             Self::Nearest => glow::NEAREST,
             Self::Linear => glow::LINEAR,
@@ -153,6 +154,7 @@ impl MinifyFilter {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum MagnifyFilter {
     Nearest,
     Linear,
@@ -160,7 +162,7 @@ pub enum MagnifyFilter {
 
 impl MagnifyFilter {
     #[inline]
-    const fn as_gl(&self) -> u32 {
+    const fn as_gl(self) -> u32 {
         match self {
             Self::Nearest => glow::NEAREST,
             Self::Linear => glow::LINEAR,
@@ -169,6 +171,7 @@ impl MagnifyFilter {
 }
 
 #[allow(dead_code)]
+#[derive(Clone, Copy)]
 pub struct SampledTexture2d<'a> {
     pub(crate) texture: &'a Texture2d,
     minify_filter: MinifyFilter,

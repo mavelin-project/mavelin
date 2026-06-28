@@ -402,10 +402,12 @@ impl CommonRenderer {
         self.window_matrix
     }
 
+    #[allow(dead_code)]
     pub const fn set_matrix(&mut self, matrix: Transform3D) {
         self.matrix = Some(matrix);
     }
 
+    #[allow(dead_code)]
     pub const fn set_default_matrix(&mut self) {
         self.matrix = None;
     }
@@ -414,6 +416,7 @@ impl CommonRenderer {
         self.window_matrix = matrix;
     }
 
+    #[allow(dead_code)]
     pub const fn set_transform(&mut self, transform: Option<Transform3D>) {
         self.transform = transform;
     }

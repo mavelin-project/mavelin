@@ -12,8 +12,8 @@ pub struct EntityTexture {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct EntityElementFace {
-    pub from: Point2D,
-    pub to: Point2D,
+    pub origin: Point2D,
+    pub size: Point2D,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -23,6 +23,7 @@ pub enum EntityElementData {
     Cube {
         start: Point3D,
         end: Point3D,
+        pivot: Option<Point3D>,
         faces: HashMap<Face, EntityElementFace>,
     },
 }

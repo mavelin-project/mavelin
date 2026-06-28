@@ -3,7 +3,7 @@ use std::f32;
 use ahash::HashMap;
 use meralus_engine::KeyCode;
 use meralus_physics::{Aabb, PhysicsBody};
-use meralus_shared::{DSize3D, DVector3D, Lerp, Point3D, Vector2D};
+use meralus_shared::{DSize3D, Lerp, Point3D, Vector2D};
 
 use crate::{Camera, get_movement_direction, get_rotation_directions, input::Input};
 
@@ -126,7 +126,7 @@ impl Inventory {
     }
 }
 
-pub struct PlayerController {
+pub struct Player {
     // START CAMERA
     pub yaw: f32,
     pub pitch: f32,
@@ -143,7 +143,7 @@ pub struct PlayerController {
     pub inventory: Inventory,
 }
 
-impl Default for PlayerController {
+impl Default for Player {
     fn default() -> Self {
         Self {
             yaw: 0.0,
@@ -158,7 +158,7 @@ impl Default for PlayerController {
 }
 
 #[allow(dead_code)]
-impl PlayerController {
+impl Player {
     pub const AFFECTED_BY_PHYSICS: bool = true;
     pub const CAMERA_OFFSET: Point3D = if Self::IS_THIRD_PERSON { Point3D::new(-2.0, 0.5, 0.0) } else { Point3D::ZERO };
     pub const IS_THIRD_PERSON: bool = false;
@@ -183,16 +183,6 @@ impl PlayerController {
     #[inline]
     pub fn camera_position(&self) -> Point3D {
         self.body.position + Point3D::Y * (Self::PLAYER_HALF_SIZE.y as f32 - 0.15) + self.bob_offset + Self::CAMERA_OFFSET
-    }
-
-    #[inline]
-    pub fn get_vector_for_rotation(&self) -> DVector3D {
-        let _f = (self.yaw - f32::consts::PI).cos();
-        let _f1 = (self.yaw - f32::consts::PI).sin();
-        let _f2 = -(self.pitch).cos();
-        let _f3 = (self.pitch).sin();
-
-        DVector3D::new(f64::from(self.pitch), f64::from(self.yaw), 0.0)
     }
 
     #[inline]
