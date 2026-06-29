@@ -124,7 +124,11 @@ impl WindowContext<'_> {
             width,
             height,
             desired_maximum_frame_latency: 2,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: if self.vsync.get() {
+                wgpu::PresentMode::AutoVsync
+            } else {
+                wgpu::PresentMode::AutoNoVsync
+            },
         });
     }
 
@@ -356,7 +360,11 @@ impl<T: State> ApplicationWindow<T> {
             width,
             height,
             desired_maximum_frame_latency: 2,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: if self.vsync {
+                wgpu::PresentMode::AutoVsync
+            } else {
+                wgpu::PresentMode::AutoNoVsync
+            },
         });
     }
 }
@@ -373,7 +381,6 @@ impl<T: State> ApplicationHandler for Application<T> {
             WindowEvent::SurfaceResized(physical_size) => self.window.inspect_mut(move |window| {
                 let vsync = Cell::new(window.vsync);
 
-                window.configure_surface(physical_size.width, physical_size.height);
                 window.state.handle_window_resize(
                     WindowContext {
                         instance: &window.instance,
@@ -390,6 +397,9 @@ impl<T: State> ApplicationHandler for Application<T> {
                     USize2D::new(physical_size.width, physical_size.height),
                     window.window.scale_factor(),
                 );
+
+                window.vsync = vsync.get();
+                window.configure_surface(physical_size.width, physical_size.height);
             }),
             WindowEvent::ModifiersChanged(modifiers) => {
                 let state = modifiers.state();
@@ -464,7 +474,16 @@ impl<T: State> ApplicationHandler for Application<T> {
 
                 window.state.update(context, delta);
                 window.state.render(context, delta);
+                
+                let prev_vsync = window.vsync;
+
                 window.vsync = vsync.get();
+
+                if window.vsync != window.vsync {
+                    let (width, height) = window.window.surface_size().into();
+
+                    window.configure_surface(width, height);
+                }
             }),
             WindowEvent::CloseRequested => event_loop.exit(),
             _ => {}
