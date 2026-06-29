@@ -77,3 +77,19 @@ jobs:
         with:
           name: mavelin-client-macos
           path: tmp/**/*
+  dev-build-macos-arm:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2.9.1
+      - name: Install target
+        run: rustup target add aarch64-apple-darwin
+      - name: Build
+        run: cargo build --release --bin mavelin-client --target aarch64-apple-darwin
+      - name: Compress
+        run: mkdir tmp && cp -r resources tmp && cp target/aarch64-apple-darwin/release/mavelin-client tmp
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mavelin-client-macos-arm
+          path: tmp/**/*
