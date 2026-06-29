@@ -1,17 +1,12 @@
 use std::{borrow::Borrow, hash::Hash};
 
-use horns::{
-    BackfaceCullingMode, Blend, BlendingFactor, Depth, DepthTest, DrawParams, ElementType, Program, ProgramBinder, RenderBackend, RenderInfo, RenderPass,
-    SampledTexture2d, create_shader, impl_vertex,
-};
 use indexmap::IndexMap;
-use meralus_shared::{AsValue, Color, FromValue, Frustum, IPoint2D, IPoint3D, Point2D, Point3D, Transform3D};
-use meralus_world::{SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32, SUBCHUNK_SIZE_I32};
+use mavelin_engine::WindowContext;
+use mavelin_shared::{AsValue, Color, Frustum, IPoint2D, IPoint3D, Point2D, Point3D, Transform3D};
+use mavelin_world::{SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32, SUBCHUNK_SIZE_I32};
 
 use super::RenderBuffer;
-use crate::render::RenderShape;
-
-create_shader!(pub VoxelShader => "./resources/shaders/voxel");
+use crate::render::{RenderInfo, RenderShape};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VoxelFace {
@@ -22,15 +17,6 @@ pub struct VoxelFace {
     pub color: Color,
 }
 
-// #[allow(dead_code)]
-// impl VoxelFace {
-//     fn cmp(&self, camera_pos: Point3D, other: &Self) -> std::cmp::Ordering {
-//         camera_pos
-//             .distance_squared(self.position)
-//             .total_cmp(&camera_pos.distance_squared(other.position))
-//     }
-// }
-
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct VoxelVertex {
@@ -40,33 +26,32 @@ pub struct VoxelVertex {
     pub light: u32,
 }
 
-impl_vertex! {
-    VoxelVertex {
-        position: [f32; 3],
-        uv: [f32; 2],
-        color: [u8; 4],
-        light: [u32; 1]
-    }
+impl VoxelVertex {
+    const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Uint8x4, 3 => Uint32],
+    };
 }
 
 pub struct TranslucentSubchunk {
-    buffer: RenderBuffer<VoxelVertex, VoxelShader, u32>,
+    buffer: RenderBuffer,
     faces: Vec<VoxelFace>,
     last_pos: Point3D,
 }
 
 impl TranslucentSubchunk {
-    pub fn new(backend: &RenderBackend, shader: &Program, mut faces: Vec<VoxelFace>, last_pos: Point3D, origin: IPoint2D) -> Self {
+    pub fn new(device: &wgpu::Device, mut faces: Vec<VoxelFace>, last_pos: Point3D, origin: IPoint2D) -> Self {
         Self::resort_faces(&mut faces, last_pos, origin);
 
         Self {
-            buffer: VoxelMeshBuilder::build_dynamic_from_slice(backend, shader, &faces),
+            buffer: VoxelMeshBuilder::build_dynamic_from_slice(device, &faces),
             faces,
             last_pos,
         }
     }
 
-    fn update(&mut self, last_pos: Point3D, origin: IPoint2D) {
+    fn update(&mut self, queue: &wgpu::Queue, last_pos: Point3D, origin: IPoint2D) {
         if self.last_pos.distance_squared(last_pos) > 2.0 && !self.faces.is_empty() {
             Self::resort_faces(&mut self.faces, last_pos, origin);
 
@@ -74,8 +59,9 @@ impl TranslucentSubchunk {
 
             builder.extend_from_slice(&self.faces);
 
-            self.buffer.vertices.dynamic_write(&builder.vertices);
-            self.buffer.indices.dynamic_write(&builder.indices);
+            queue.write_buffer(&self.buffer.vertices, 0, bytemuck::cast_slice(&builder.vertices));
+            queue.write_buffer(&self.buffer.indices, 0, bytemuck::cast_slice(&builder.indices));
+
             self.last_pos = last_pos;
         }
     }
@@ -93,7 +79,7 @@ impl TranslucentSubchunk {
 }
 
 struct RenderSubchunk {
-    solid: RenderBuffer<VoxelVertex, VoxelShader, u32>,
+    solid: RenderBuffer,
     translucent: TranslucentSubchunk,
 }
 
@@ -119,21 +105,21 @@ impl VoxelMeshBuilder {
     }
 
     #[inline]
-    pub fn build_from_slice(backend: &RenderBackend, shader: &Program, voxels: &[VoxelFace]) -> RenderBuffer<VoxelVertex, VoxelShader, u32> {
+    pub fn build_from_slice(device: &wgpu::Device, voxels: &[VoxelFace]) -> RenderBuffer {
         let mut this = Self::new();
 
         this.extend_from_slice(voxels);
 
-        this.build(backend, shader)
+        this.build(device)
     }
 
     #[inline]
-    pub fn build_dynamic_from_slice(backend: &RenderBackend, shader: &Program, voxels: &[VoxelFace]) -> RenderBuffer<VoxelVertex, VoxelShader, u32> {
+    pub fn build_dynamic_from_slice(device: &wgpu::Device, voxels: &[VoxelFace]) -> RenderBuffer {
         let mut this = Self::new();
 
         this.extend_from_slice(voxels);
 
-        this.build_dynamic(backend, shader)
+        this.build_dynamic(device)
     }
 
     #[inline]
@@ -182,57 +168,347 @@ impl VoxelMeshBuilder {
     #[inline]
     pub fn render_full_bright(
         self,
-        backend: &RenderBackend,
-        renderer: &ChunkRenderer,
-        pass: &mut RenderPass,
+        context: &WindowContext,
+        render_pass: &mut wgpu::RenderPass,
+        renderer: &mut ChunkRenderer,
         matrix: Transform3D,
-        atlas: SampledTexture2d,
-        lightmap: SampledTexture2d,
     ) -> RenderInfo {
-        let buffer = self.build(backend, &renderer.shader);
+        let buffer = self.build(context.device);
 
-        renderer.render_buffer(pass, &buffer, matrix, atlas, lightmap, true)
+        renderer.render_buffer(context.queue, render_pass, &buffer, matrix, true)
     }
 
     #[inline]
-    pub fn render(
-        self,
-        backend: &RenderBackend,
-        renderer: &ChunkRenderer,
-        pass: &mut RenderPass,
-        matrix: Transform3D,
-        atlas: SampledTexture2d,
-        lightmap: SampledTexture2d,
-    ) -> RenderInfo {
-        let buffer = self.build(backend, &renderer.shader);
+    pub fn render(self, context: &WindowContext, render_pass: &mut wgpu::RenderPass, renderer: &mut ChunkRenderer, matrix: Transform3D) -> RenderInfo {
+        let buffer = self.build(context.device);
 
-        renderer.render_buffer(pass, &buffer, matrix, atlas, lightmap, false)
+        renderer.render_buffer(context.queue, render_pass, &buffer, matrix, false)
     }
 
     #[inline]
-    pub fn build(self, backend: &RenderBackend, shader: &Program) -> RenderBuffer<VoxelVertex, VoxelShader, u32> {
-        RenderBuffer::new(backend, &self.vertices, shader, ElementType::Triangles, &self.indices).unwrap()
+    pub fn build(self, device: &wgpu::Device) -> RenderBuffer {
+        RenderBuffer::new(device, &self.vertices, &self.indices)
     }
 
     #[inline]
-    pub fn build_dynamic(self, backend: &RenderBackend, shader: &Program) -> RenderBuffer<VoxelVertex, VoxelShader, u32> {
-        RenderBuffer::new_dynamic(backend, &self.vertices, shader, ElementType::Triangles, &self.indices).unwrap()
+    pub fn build_dynamic(self, device: &wgpu::Device) -> RenderBuffer {
+        RenderBuffer::new(device, &self.vertices, &self.indices)
     }
 }
 
 pub struct ChunkRenderer {
-    pub shader: Program,
+    solid_render_pipeline: wgpu::RenderPipeline,
+    translucent_render_pipeline: wgpu::RenderPipeline,
+    voxel_bind_group: wgpu::BindGroup,
+    fragment_bind_group: wgpu::BindGroup,
+    fog_bind_group: wgpu::BindGroup,
+
+    voxel: VoxelUniform,
+    voxel_buffer: wgpu::Buffer,
+    fog: FogUniform,
+    fog_buffer: wgpu::Buffer,
+
     subchunks: IndexMap<(IPoint2D, usize), RenderSubchunk>,
     last_position: IPoint3D,
     sun_position: f32,
     fog_color: Color,
 }
 
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct FogUniform {
+    fog_color: [f32; 4],
+    fog_env_start: f32,
+    fog_env_end: f32,
+    fog_render_dist_start: f32,
+    fog_render_dist_end: f32,
+    enabled: u32,
+    _pad: [u32; 3],
+}
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct VoxelUniform {
+    camera_pos: Point3D,
+    sun_position: Point3D,
+    _pad: [u32; 2],
+}
+
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct VoxelImmediates {
+    matrix: Transform3D,
+    chunk: IPoint3D,
+    _pad: [u32; 1],
+}
+
 impl ChunkRenderer {
     #[inline]
-    pub fn new(backend: &RenderBackend) -> Self {
+    #[allow(clippy::too_many_lines)]
+    pub fn new(context: &WindowContext, texture: &wgpu::Texture, lightmap: &wgpu::Texture) -> Self {
+        let shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Chunk Renderer Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../../../resources/shaders/voxel.wgsl").into()),
+        });
+
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let lightmap_view = lightmap.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+
+        let voxel_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Voxel Buffer"),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            size: size_of::<VoxelUniform>() as u64,
+            mapped_at_creation: false,
+        });
+
+        let fog_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Fog Buffer"),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            size: size_of::<FogUniform>() as u64,
+            mapped_at_creation: false,
+        });
+
+        let voxel_bind_group_layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+            label: Some("Chunk Renderer Bind Group Layout"),
+        });
+
+        let voxel_bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &voxel_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: voxel_buffer.as_entire_binding(),
+            }],
+            label: Some("Chunk Renderer Bind Group"),
+        });
+
+        let fog_bind_group_layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+            label: Some("Chunk Renderer Bind Group Layout"),
+        });
+
+        let fog_bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &fog_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: fog_buffer.as_entire_binding(),
+            }],
+            label: Some("Chunk Renderer Bind Group"),
+        });
+
+        let fragment_bind_group_layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+            label: Some("Chunk Renderer Bind Group Layout"),
+        });
+
+        let fragment_bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &fragment_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&lightmap_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+            label: Some("Chunk Renderer Bind Group"),
+        });
+
+        let render_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Chunk Renderer Pipeline Layout"),
+            bind_group_layouts: &[Some(&voxel_bind_group_layout), Some(&fragment_bind_group_layout), Some(&fog_bind_group_layout)],
+            immediate_size: size_of::<VoxelImmediates>() as u32,
+        });
+
+        let solid_render_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Chunk Renderer Solid Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Some(VoxelVertex::LAYOUT)],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: *context.surface_format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: Some(wgpu::Face::Back),
+                ..wgpu::PrimitiveState::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: mavelin_engine::Texture::DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let translucent_render_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Chunk Renderer Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Some(VoxelVertex::LAYOUT)],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: *context.surface_format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: Some(wgpu::Face::Back),
+                ..wgpu::PrimitiveState::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: mavelin_engine::Texture::DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        // pass.apply_params(DrawParams {
+        //     blend: Some(Blend {
+        //         color: (BlendingFactor::SourceAlpha,
+        // BlendingFactor::OneMinusSourceAlpha),         alpha:
+        // (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),     }),
+        //     depth: Some(Depth {
+        //         test: DepthTest::IfLessOrEqual,
+        //         write: true,
+        //     }),
+        //     culling: Some(BackfaceCullingMode::CullCounterClockwise),
+        // });
         Self {
-            shader: backend.create_program(&VoxelShader).unwrap(),
+            solid_render_pipeline,
+            translucent_render_pipeline,
+            voxel_bind_group,
+            fragment_bind_group,
+            fog_bind_group,
+            voxel: VoxelUniform {
+                camera_pos: Point3D::ZERO,
+                sun_position: Point3D::ZERO,
+                _pad: [0; 2],
+            },
+            voxel_buffer,
+            fog: FogUniform {
+                enabled: 1,
+                fog_color: [0.0; 4],
+                fog_env_start: SUBCHUNK_SIZE_F32 * 2.0,
+                fog_env_end: SUBCHUNK_SIZE_F32 * 6.0,
+                fog_render_dist_start: SUBCHUNK_SIZE_F32 * 3.0,
+                fog_render_dist_end: SUBCHUNK_SIZE_F32 * 6.0,
+                _pad: [0; 3],
+            },
+            fog_buffer,
             subchunks: IndexMap::new(),
             last_position: IPoint3D::ZERO,
             sun_position: 0.0,
@@ -241,18 +517,30 @@ impl ChunkRenderer {
     }
 
     #[inline]
-    pub fn set_subchunk(&mut self, origin: (IPoint2D, usize), solid: RenderBuffer<VoxelVertex, VoxelShader, u32>, translucent: TranslucentSubchunk) {
+    pub fn set_subchunk(&mut self, origin: (IPoint2D, usize), solid: RenderBuffer, translucent: TranslucentSubchunk) {
         self.subchunks.insert(origin, RenderSubchunk { solid, translucent });
     }
 
     #[inline]
-    pub const fn set_sun_position(&mut self, value: f32) {
-        self.sun_position = value;
+    pub const fn set_camera_pos(&mut self, camera_pos: Point3D) {
+        self.voxel.camera_pos = camera_pos;
     }
 
     #[inline]
-    pub const fn set_fog_color(&mut self, value: Color) {
+    pub const fn set_sun_position(&mut self, value: f32) {
+        self.voxel.sun_position.y = value;
+    }
+
+    #[inline]
+    pub fn set_fog_color(&mut self, value: Color) {
         self.fog_color = value;
+        self.fog.fog_color = value.as_value();
+    }
+
+    #[inline]
+    pub fn update_uniforms(&self, queue: &wgpu::Queue) {
+        queue.write_buffer(&self.voxel_buffer, 0, bytemuck::bytes_of(&self.voxel));
+        queue.write_buffer(&self.fog_buffer, 0, bytemuck::bytes_of(&self.fog));
     }
 
     #[inline]
@@ -274,54 +562,62 @@ impl ChunkRenderer {
         self.subchunks.contains_key(k)
     }
 
-    #[inline]
-    fn bind_shader(&self, matrix: Transform3D, atlas: SampledTexture2d, lightmap: SampledTexture2d, sun_y: f32) -> ProgramBinder<'_> {
-        self.shader
-            .bind()
-            .with_uniform("matrix", matrix)
-            .with_uniform("tex", atlas)
-            .with_uniform("lightmap", lightmap)
-            .with_uniform("sun_position", [0.0, sun_y, 0.0])
-            .with_uniform("with_tex", true)
-            .with_uniform("with_fog", false)
-    }
+    // #[inline]
+    // fn bind_shader(&self, matrix: Transform3D, atlas: SampledTexture2d, lightmap:
+    // SampledTexture2d, sun_y: f32) -> ProgramBinder<'_> {     self.shader
+    //         .bind()
+    //         .with_uniform("matrix", matrix)
+    //         .with_uniform("tex", atlas)
+    //         .with_uniform("lightmap", lightmap)
+    //         .with_uniform("sun_position", [0.0, sun_y, 0.0])
+    //         .with_uniform("with_tex", true)
+    //         .with_uniform("with_fog", false)
+    // }
 
     pub fn render_buffer(
-        &self,
-        pass: &mut RenderPass,
-        buffer: &RenderBuffer<VoxelVertex, VoxelShader, u32>,
+        &mut self,
+        queue: &wgpu::Queue,
+        render_pass: &mut wgpu::RenderPass,
+        buffer: &RenderBuffer,
         matrix: Transform3D,
-        atlas: SampledTexture2d,
-        lightmap: SampledTexture2d,
         full_bright: bool,
     ) -> RenderInfo {
-        self.bind_shader(
-            matrix,
-            atlas,
-            lightmap,
-            if full_bright { const { (1.0 - 0.5) / 0.96 } } else { self.sun_position },
-        )
-        .with_uniform("chunk", IPoint3D::ZERO)
-        .with_uniform("camera_pos", Point3D::ZERO);
+        self.set_sun_position(if full_bright { const { (1.0 - 0.5) / 0.96 } } else { self.sun_position });
+        self.set_camera_pos(Point3D::ZERO);
+        self.update_uniforms(queue);
 
-        pass.apply_params(DrawParams {
-            blend: Some(Blend {
-                color: (BlendingFactor::SourceAlpha, BlendingFactor::OneMinusSourceAlpha),
-                alpha: (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),
+        // pass.apply_params(DrawParams {
+        //     blend: Some(Blend {
+        //         color: (BlendingFactor::SourceAlpha,
+        // BlendingFactor::OneMinusSourceAlpha),         alpha:
+        // (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),     }),
+        //     depth: Some(Depth {
+        //         test: DepthTest::IfLessOrEqual,
+        //         write: true,
+        //     }),
+        //     culling: Some(BackfaceCullingMode::CullCounterClockwise),
+        // });
+        render_pass.set_pipeline(&self.solid_render_pipeline);
+        render_pass.set_bind_group(0, &self.voxel_bind_group, &[]);
+        render_pass.set_bind_group(1, &self.fragment_bind_group, &[]);
+        render_pass.set_bind_group(2, &self.fog_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, buffer.vertices.slice(..));
+        render_pass.set_index_buffer(buffer.indices.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.insert_debug_marker("render_buffer");
+        render_pass.set_immediates(
+            0,
+            bytemuck::bytes_of(&VoxelImmediates {
+                chunk: IPoint3D::ZERO,
+                matrix,
+                _pad: [0; 1],
             }),
-            depth: Some(Depth {
-                test: DepthTest::IfLessOrEqual,
-                write: true,
-            }),
-            culling: Some(BackfaceCullingMode::CullCounterClockwise),
-        });
+        );
 
-        pass.draw_elements(&buffer.vertices, &buffer.indices);
-        pass.reset_params();
+        render_pass.draw_indexed(0..buffer.count as u32, 0, 0..1);
 
         RenderInfo {
             draw_calls: 1,
-            vertices: buffer.vertices.len(),
+            vertices: buffer.count,
         }
     }
 
@@ -334,13 +630,16 @@ impl ChunkRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn render<T: Frustum>(
         &mut self,
-        pass: &mut RenderPass,
+        queue: &wgpu::Queue,
+        render_pass: &mut wgpu::RenderPass,
         camera_pos: Point3D,
         frustum: &T,
         matrix: Transform3D,
-        atlas: SampledTexture2d,
-        lightmap: SampledTexture2d,
     ) -> RenderInfo {
+        self.set_sun_position(self.sun_position);
+        self.set_camera_pos(camera_pos);
+        self.update_uniforms(queue);
+
         let pos = camera_pos.as_ivec3();
 
         if self.last_position == IPoint3D::ZERO || self.last_position.distance_squared(pos) > 4 {
@@ -361,69 +660,61 @@ impl ChunkRenderer {
         }
 
         let mut render_info = RenderInfo::default();
-        let mut binder = self
-            .shader
-            .bind()
-            .with_uniform("matrix", matrix)
-            .with_uniform("tex", atlas)
-            .with_uniform("lightmap", lightmap)
-            .with_uniform("sun_position", [0.0, self.sun_position, 0.0])
-            .with_uniform("with_tex", true)
-            .with_uniform("with_fog", true)
-            .with_uniform("fog_color", <[f32; 4]>::from_value(&self.fog_color))
-            .with_uniform("fog_env_start", SUBCHUNK_SIZE_F32 * 2.0)
-            .with_uniform("fog_env_end", SUBCHUNK_SIZE_F32 * 6.0)
-            .with_uniform("fog_render_dist_start", SUBCHUNK_SIZE_F32 * 3.0)
-            .with_uniform("fog_render_dist_end", SUBCHUNK_SIZE_F32 * 6.0)
-            .with_uniform("camera_pos", camera_pos);
 
-        pass.apply_params(DrawParams {
-            blend: Some(Blend {
-                color: (BlendingFactor::SourceAlpha, BlendingFactor::OneMinusSourceAlpha),
-                alpha: (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),
+        render_pass.set_pipeline(&self.solid_render_pipeline);
+        render_pass.set_bind_group(0, &self.voxel_bind_group, &[]);
+        render_pass.set_bind_group(1, &self.fragment_bind_group, &[]);
+        render_pass.set_bind_group(2, &self.fog_bind_group, &[]);
+        render_pass.set_immediates(
+            0,
+            bytemuck::bytes_of(&VoxelImmediates {
+                chunk: IPoint3D::ZERO,
+                matrix,
+                _pad: [0; 1],
             }),
-            depth: Some(Depth {
-                test: DepthTest::IfLessOrEqual,
-                write: true,
-            }),
-            culling: Some(BackfaceCullingMode::CullCounterClockwise),
-        });
+        );
 
         for (&key, subchunk) in &self.subchunks {
-            if Self::is_subchunk_visible(frustum, key) && !subchunk.solid.indices.is_empty() {
-                binder.set_uniform("chunk", IPoint3D::new(key.0.x * SUBCHUNK_SIZE_I32, 0, key.0.y * SUBCHUNK_SIZE_I32));
+            if Self::is_subchunk_visible(frustum, key) && subchunk.solid.count > 0 {
+                render_pass.set_immediates(
+                    64,
+                    bytemuck::bytes_of(&IPoint3D::new(key.0.x * SUBCHUNK_SIZE_I32, 0, key.0.y * SUBCHUNK_SIZE_I32).to_array()),
+                );
 
-                pass.draw_elements(&subchunk.solid.vertices, &subchunk.solid.indices);
+                render_pass.set_vertex_buffer(0, subchunk.solid.vertices.slice(..));
+                render_pass.set_index_buffer(subchunk.solid.indices.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..subchunk.solid.count as u32, 0, 0..1);
 
                 render_info.draw_calls += 1;
             }
         }
 
-        pass.apply_params(DrawParams {
-            blend: Some(Blend {
-                color: (BlendingFactor::SourceAlpha, BlendingFactor::OneMinusSourceAlpha),
-                alpha: (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),
+        render_pass.set_pipeline(&self.translucent_render_pipeline);
+        render_pass.set_immediates(
+            0,
+            bytemuck::bytes_of(&VoxelImmediates {
+                chunk: IPoint3D::ZERO,
+                matrix,
+                _pad: [0; 1],
             }),
-            depth: Some(Depth {
-                test: DepthTest::IfLessOrEqual,
-                write: false,
-            }),
-            culling: Some(BackfaceCullingMode::CullCounterClockwise),
-        });
+        );
 
         for (&key, subchunk) in self.subchunks.iter_mut().rev() {
-            if Self::is_subchunk_visible(frustum, key) && !subchunk.translucent.buffer.indices.is_empty() {
-                subchunk.translucent.update(camera_pos, key.0);
+            if Self::is_subchunk_visible(frustum, key) && subchunk.translucent.buffer.count > 0 {
+                render_pass.set_immediates(
+                    64,
+                    bytemuck::bytes_of(&IPoint3D::new(key.0.x * SUBCHUNK_SIZE_I32, 0, key.0.y * SUBCHUNK_SIZE_I32).to_array()),
+                );
 
-                binder.set_uniform("chunk", IPoint3D::new(key.0.x * SUBCHUNK_SIZE_I32, 0, key.0.y * SUBCHUNK_SIZE_I32));
+                subchunk.translucent.update(queue, camera_pos, key.0);
 
-                pass.draw_elements(&subchunk.translucent.buffer.vertices, &subchunk.translucent.buffer.indices);
+                render_pass.set_vertex_buffer(0, subchunk.translucent.buffer.vertices.slice(..));
+                render_pass.set_index_buffer(subchunk.translucent.buffer.indices.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..subchunk.translucent.buffer.count as u32, 0, 0..1);
 
                 render_info.draw_calls += 1;
             }
         }
-
-        pass.reset_params();
 
         render_info
     }

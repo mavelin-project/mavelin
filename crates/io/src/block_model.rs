@@ -1,5 +1,5 @@
 use ahash::HashMap;
-use meralus_shared::{Axis, Face, Point2D, Point3D};
+use mavelin_shared::{Axis, Face, Point2D, Point3D};
 use serde::{
     Deserialize, Serialize,
     de::{Error, Visitor},

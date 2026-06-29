@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use meralus_shared::{Color, Face, Lerp, Point3D, Vector3D};
+use mavelin_shared::{Color, Face, Lerp, Point3D, Vector3D};
 
 use crate::input::Input;
 
@@ -66,23 +66,6 @@ impl AsColor for Face {
             Self::Back => Color::PURPLE,
         }
     }
-}
-
-pub const SIZE_CAP: f32 = 960.0;
-
-#[inline]
-pub fn format_bytes(bytes: usize) -> String {
-    let mut value = bytes as f32;
-
-    for suffix in ["B", "kB", "MB"] {
-        if value > SIZE_CAP {
-            value /= 1024.0;
-        } else {
-            return format!("{value:.2}{suffix}");
-        }
-    }
-
-    format!("{value:.2}GB")
 }
 
 // #[allow(dead_code)]
@@ -164,6 +147,7 @@ pub fn format_bytes(bytes: usize) -> String {
 //         vertices
 //     })
 // }
+#[allow(dead_code)]
 pub fn get_sky_color((after_day, progress): (bool, f32), weather: f32) -> Color {
     let day_color: Color = Color::from_hsl(220.0, 0.2f32.mul_add(weather, 0.5), 0.6f32.mul_add(-weather, 0.75));
     let night_color: Color = Color::from_hsl(220.0, 0.1f32.mul_add(weather, 0.35), 0.15f32.mul_add(-weather, 0.25));

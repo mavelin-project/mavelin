@@ -1,4 +1,4 @@
-use meralus_shared::{Cube3D, DPoint3D, DSize3D, Face};
+use mavelin_shared::{Cube3D, DPoint3D, DSize3D, Face};
 
 use crate::raycast::RayCastResult;
 

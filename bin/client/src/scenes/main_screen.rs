@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use meralus_shared::{Color, Point2D};
+use mavelin_shared::{Color, Point2D};
 
 use crate::{
     render::context::{ArrangeStrategy, Arrangement, MeasureStrategy, RowStrategy, UiSubcontext, WidgetState},
@@ -45,7 +45,7 @@ impl Screen for MainScreen {
             scope.column(|scope| {
                 scope.set_h_arrangement(Arrangement::End);
 
-                scope.text("MERALUS", 72.0, "default", Color::from_hsl(110.0, 0.4, 0.7));
+                scope.text("MAVELIN", 72.0, "default", Color::from_hsl(110.0, 0.4, 0.7));
                 scope.text("deltarune today!", 18.0, "default", Color::from_hsl(110.0, 0.3, 0.6));
             });
         });

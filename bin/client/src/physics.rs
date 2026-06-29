@@ -1,7 +1,7 @@
-use meralus_physics::{Aabb, AabbSource};
-use meralus_shared::{IPoint3D, Point3D};
-use meralus_storage::ResourceStorage;
-use meralus_world::{ChunkAccess, ChunkCache, ChunkManager};
+use mavelin_physics::{Aabb, AabbSource};
+use mavelin_shared::{IPoint3D, Point3D};
+use mavelin_storage::ResourceStorage;
+use mavelin_world::{ChunkAccess, ChunkCache, ChunkManager};
 
 use crate::world::{EntityData, EntityManager};
 

@@ -1,6 +1,6 @@
 use horns::{ElementType, IndexBuffer, Program, RenderBackend, RenderPass, Shader, Texture2d, VertexBuffer, impl_vertex};
-use meralus_physics::{AabbSource, PhysicsBody, PhysicsContext, RayCastResult};
-use meralus_shared::{Color, Point2D, Point3D, Size3D, Transform3D, Vector3D};
+use mavelin_physics::{AabbSource, PhysicsBody, PhysicsContext, RayCastResult};
+use mavelin_shared::{Color, Point2D, Point3D, Size3D, Transform3D, Vector3D};
 
 pub mod kawase;
 

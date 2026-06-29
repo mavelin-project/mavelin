@@ -1,9 +1,9 @@
 use std::{iter::repeat_n, marker::PhantomData};
 
 use ahash::HashMap;
-use meralus_shared::{Face, IPoint2D, IPoint3D, USizePoint2D, USizePoint3D};
+use mavelin_shared::{Face, IPoint2D, IPoint3D, USizePoint2D, USizePoint3D};
 
-use crate::{BiomeBase, PropertyValue, new_boxed_array};
+use crate::{Biome, PropertyValue, new_boxed_array};
 
 pub const SUBCHUNK_XZ_MAX: usize = SUBCHUNK_SIZE - 1;
 
@@ -264,7 +264,7 @@ pub struct Chunk {
     /// Chunk location on a 2D grid
     pub origin: IPoint2D,
     /// 2D array of block IDs.
-    pub biomes: [BiomeBase; SUBCHUNK_SIZE * SUBCHUNK_SIZE],
+    pub biomes: [Biome; SUBCHUNK_SIZE * SUBCHUNK_SIZE],
     /// Array of chunk vertical sections
     pub subchunks: Box<[SubChunk; SUBCHUNK_COUNT]>,
     pub dirty: bool,
@@ -275,7 +275,7 @@ impl Chunk {
     pub fn empty() -> Self {
         Self {
             origin: IPoint2D::ZERO,
-            biomes: [BiomeBase::Sky; SUBCHUNK_SIZE * SUBCHUNK_SIZE],
+            biomes: [Biome::Sky; SUBCHUNK_SIZE * SUBCHUNK_SIZE],
             subchunks: SubChunk::empty_full_height(),
             dirty: true,
         }
@@ -497,7 +497,7 @@ impl Chunk {
     }
 
     #[inline]
-    pub fn set_biome_unchecked(&mut self, position: USizePoint2D, biome: BiomeBase) {
+    pub fn set_biome_unchecked(&mut self, position: USizePoint2D, biome: Biome) {
         unsafe {
             *self.biomes.get_unchecked_mut(Self::index_of_biome(position)) = biome;
         }
@@ -505,7 +505,7 @@ impl Chunk {
 
     #[must_use]
     #[inline]
-    pub fn get_biome_unchecked(&self, position: USizePoint2D) -> BiomeBase {
+    pub fn get_biome_unchecked(&self, position: USizePoint2D) -> Biome {
         unsafe { *self.biomes.get_unchecked(Self::index_of_biome(position)) }
     }
 

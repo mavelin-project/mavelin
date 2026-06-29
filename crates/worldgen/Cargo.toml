@@ -1,12 +1,12 @@
 [package]
-name = "meralus-worldgen"
+name = "mavelin-worldgen"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 ahash.workspace = true
-meralus-shared = { workspace = true, features = ["geometry", "random"] }
-meralus-world.workspace = true
+mavelin-shared = { workspace = true, features = ["geometry", "random"] }
+mavelin-world.workspace = true
 
 [lints]
 workspace = true

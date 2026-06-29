@@ -12,8 +12,9 @@ use std::{
 
 use ahash::HashMap;
 use image::RgbaImage;
-use meralus_shared::{Point2D, Vector2D};
-use meralus_world::BlockSource;
+pub use mavelin_io::{BiomeColorConfig, ColorConfig};
+use mavelin_shared::{Point2D, Vector2D};
+use mavelin_world::BlockSource;
 
 pub use self::{
     block::{Block, BlockData, BlockStorage},
@@ -48,6 +49,7 @@ pub struct ResourceStorage {
     pub models: BakedBlockModelStorage,
     pub entity_models: EntityModelStorage,
     pub mappings: Mappings,
+    pub color_config: ColorConfig,
 }
 
 #[allow(clippy::missing_panics_doc)]
@@ -55,8 +57,11 @@ impl ResourceStorage {
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
         let mut mappings = HashMap::default();
+        let path = absolute(root.into()).unwrap();
+        let color_config_path = path.join("configs/colors.toml");
+        let color_config = ColorConfig::from_toml_slice(&fs::read(color_config_path).unwrap()).unwrap();
 
-        mappings.insert(String::from("game"), absolute(root.into()).unwrap());
+        mappings.insert(String::from("game"), path);
 
         Self {
             textures: TextureStorage::new(),
@@ -64,6 +69,7 @@ impl ResourceStorage {
             models: BakedBlockModelStorage::default(),
             entity_models: EntityModelStorage::default(),
             mappings,
+            color_config,
         }
     }
 

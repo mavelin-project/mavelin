@@ -1,13 +1,15 @@
 [package]
-name = "meralus-engine"
+name = "mavelin-engine"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-meralus-shared.workspace = true
-winit = "0.31.0-beta.2"
+mavelin-shared.workspace = true
+winit = { git = "https://github.com/rust-windowing/winit.git" }
 horns.workspace = true
 png = "0.18.1"
+wgpu = { version = "29.0.0", git = "https://github.com/mavelin-project/wgpu.git", branch = "glutin" }
+pollster = "0.4.0"
 
 [lints]
 workspace = true

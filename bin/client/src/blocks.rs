@@ -1,6 +1,8 @@
-use meralus_shared::Color;
+use mavelin_shared::Color;
+use mavelin_storage::ColorConfig;
+use mavelin_world::Biome;
 
-use crate::{Block, world::GRASS_COLOR};
+use crate::Block;
 
 pub struct AirBlock;
 
@@ -33,9 +35,19 @@ impl Block for WaterBlock {
         "water"
     }
 
-    fn tint_color(&self) -> Option<Color> {
-        Some(Color::from_hsl(215.0, 1.0, 0.7))
+    fn tint_color(&self, color_config: &ColorConfig, biome: Biome) -> Option<Color> {
+        Some(
+            color_config
+                .biomes
+                .get(&biome)
+                .and_then(|biome| biome.water_color)
+                .unwrap_or(color_config.base_water_color),
+        )
     }
+
+    // fn tint_color(&self) -> Option<Color> {
+    //     Some(Color::from_hsl(215.0, 1.0, 0.7))
+    // }
 
     fn blocks_light(&self) -> bool {
         false
@@ -77,8 +89,14 @@ impl Block for GrassBlock {
         "grass_block"
     }
 
-    fn tint_color(&self) -> Option<Color> {
-        Some(GRASS_COLOR)
+    fn tint_color(&self, color_config: &ColorConfig, biome: Biome) -> Option<Color> {
+        Some(
+            color_config
+                .biomes
+                .get(&biome)
+                .and_then(|biome| biome.foliage_color)
+                .unwrap_or(color_config.base_foliage_color),
+        )
     }
 }
 
@@ -113,8 +131,14 @@ impl Block for OakLeavesBlock {
         "oak_leaves"
     }
 
-    fn tint_color(&self) -> Option<Color> {
-        Some(Color::from_hsl(126.0, 0.712, 0.505))
+    fn tint_color(&self, color_config: &ColorConfig, biome: Biome) -> Option<Color> {
+        Some(
+            color_config
+                .biomes
+                .get(&biome)
+                .and_then(|biome| biome.foliage_color)
+                .unwrap_or(color_config.base_foliage_color),
+        )
     }
 
     fn consume_light_level(&self) -> u8 {

@@ -1,15 +1,17 @@
 use std::{fs, path::Path};
 
 use ahash::HashMap;
-use meralus_io::{BlockModel, TexturePath, TextureRef};
-use meralus_shared::Color;
+use mavelin_io::{BlockModel, ColorConfig, TexturePath, TextureRef};
+use mavelin_shared::Color;
+use mavelin_world::Biome;
 
 use crate::{LoadingError, LoadingResult, Mappings, ModelLoadingError, texture::TextureStorage};
 
 pub trait Block: Send + Sync {
     fn id(&self) -> &'static str;
 
-    fn tint_color(&self) -> Option<Color> {
+    #[allow(unused_variables)]
+    fn tint_color(&self, color_config: &ColorConfig, biome: Biome) -> Option<Color> {
         None
     }
 
@@ -61,7 +63,7 @@ impl Block for BlockData {
         self.id
     }
 
-    fn tint_color(&self) -> Option<Color> {
+    fn tint_color(&self, _: &ColorConfig, _: Biome) -> Option<Color> {
         self.tint_color
     }
 

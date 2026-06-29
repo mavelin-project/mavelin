@@ -3,16 +3,16 @@ members = ["bin/*", "crates/*", "support-crates/*"]
 resolver = "2"
 
 [workspace.dependencies]
-meralus-addons = { path = "./crates/addons" }
-meralus-tween = { path = "./crates/tween" }
-meralus-engine = { path = "./crates/engine" }
-meralus-network = { path = "./crates/network" }
-meralus-physics = { path = "./crates/physics" }
-meralus-shared = { path = "./crates/shared" }
-meralus-io = { path = "./crates/io" }
-meralus-storage = { path = "./crates/storage" }
-meralus-world = { path = "./crates/world" }
-meralus-worldgen = { path = "./crates/worldgen" }
+mavelin-addons = { path = "./crates/addons" }
+mavelin-tween = { path = "./crates/tween" }
+mavelin-engine = { path = "./crates/engine" }
+mavelin-network = { path = "./crates/network" }
+mavelin-physics = { path = "./crates/physics" }
+mavelin-shared = { path = "./crates/shared" }
+mavelin-io = { path = "./crates/io" }
+mavelin-storage = { path = "./crates/storage" }
+mavelin-world = { path = "./crates/world" }
+mavelin-worldgen = { path = "./crates/worldgen" }
 meck = { path = "./crates/meck" }
 horns = { path = "./support-crates/horns" }
 

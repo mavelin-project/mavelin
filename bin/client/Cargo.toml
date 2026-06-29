@@ -1,26 +1,26 @@
 [package]
-name = "meralus-client"
+name = "mavelin-client"
 version = "0.1.0"
 edition = "2024"
 
 [features]
 default = []
-addons = ["dep:meralus-addons"]
-multiplayer = ["dep:meralus-network", "dep:tokio"]
+addons = ["dep:mavelin-addons"]
+multiplayer = ["dep:mavelin-network", "dep:tokio"]
 
 [dependencies]
-meralus-addons = { workspace = true, optional = true }
-meralus-engine.workspace = true
-meralus-network = { workspace = true, optional = true }
-meralus-physics.workspace = true
-meralus-shared = { workspace = true, features = ["convert", "color", "frustum", "face", "geometry"] }
-meralus-storage.workspace = true
-meralus-tween.workspace = true
-meralus-world.workspace = true
-meralus-worldgen.workspace = true
+mavelin-addons = { workspace = true, optional = true }
+mavelin-engine.workspace = true
+mavelin-network = { workspace = true, optional = true }
+mavelin-physics.workspace = true
+mavelin-shared = { workspace = true, features = ["convert", "color", "frustum", "face", "geometry"] }
+mavelin-storage.workspace = true
+mavelin-tween.workspace = true
+mavelin-world.workspace = true
+mavelin-worldgen.workspace = true
 
 ahash.workspace = true
-horns.workspace = true
+wgpu = { version = "29.0.0", git = "https://github.com/mavelin-project/wgpu.git", branch = "glutin" }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"], optional = true }
 
 cpal = { version = "0.17.3", features = ["jack"] }

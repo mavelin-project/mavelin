@@ -1,4 +1,4 @@
-use meralus_shared::{Color, Point2D, Rect, Size2D, Thickness, Vector2D};
+use mavelin_shared::{Color, Point2D, Rect, Size2D, Thickness, Vector2D};
 
 use crate::render::common::CommonRenderer;
 
@@ -208,12 +208,12 @@ pub enum Shape {
 }
 
 impl Shape {
-    fn paint(&self, renderer: &mut CommonRenderer, node: Rect) {
+    fn paint(&self, renderer: &mut CommonRenderer, queue: &wgpu::Queue, node: Rect) {
         match self {
             Self::Noop => (),
             &Self::RRect(rounding, color) => renderer.draw_round_rect(node.origin, node.size, rounding, color),
             &Self::Rect(color) => renderer.draw_rect(node.origin, node.size, color),
-            Self::Text(text, font_size, font, color) => renderer.draw_text(node.origin, font, text, *color, *font_size, Some(node.size.x)),
+            Self::Text(text, font_size, font, color) => renderer.draw_text(queue, node.origin, font, text, *color, *font_size, Some(node.size.x)),
         }
     }
 }
@@ -333,17 +333,17 @@ impl UiContext {
         self.widgets[widget.0].parent
     }
 
-    pub fn paint_root(&self, renderer: &mut CommonRenderer) {
-        self.paint(renderer, WidgetId(0));
+    pub fn paint_root(&self, renderer: &mut CommonRenderer, queue: &wgpu::Queue) {
+        self.paint(renderer, queue, WidgetId(0));
     }
 
-    pub fn paint(&self, renderer: &mut CommonRenderer, widget: WidgetId) {
+    pub fn paint(&self, renderer: &mut CommonRenderer, queue: &wgpu::Queue, widget: WidgetId) {
         let data = &self.widgets[widget.0];
 
-        data.shape.paint(renderer, data.layout_node);
+        data.shape.paint(renderer, queue, data.layout_node);
 
         for w in 1..=self.all_children(widget) {
-            self.paint(renderer, WidgetId(widget.0 + w));
+            self.paint(renderer, queue, WidgetId(widget.0 + w));
         }
     }
 

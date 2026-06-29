@@ -18,7 +18,7 @@ pub use lasso::Spur;
 
 pub use self::{
     bfs_light::{BfsLight, LightNode},
-    biome::BiomeBase,
+    biome::Biome,
     chunk::{
         CHUNK_HEIGHT, CHUNK_HEIGHT_F32, CHUNK_HEIGHT_F64, CHUNK_HEIGHT_I32, CHUNK_HEIGHT_U16, Chunk, SUBCHUNK_COUNT, SUBCHUNK_COUNT_F32, SUBCHUNK_COUNT_I32,
         SUBCHUNK_COUNT_U16, SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32, SUBCHUNK_SIZE_F64, SUBCHUNK_SIZE_I32, SUBCHUNK_SIZE_U16, SubChunk, SubChunkBlockState,

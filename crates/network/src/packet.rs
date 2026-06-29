@@ -1,4 +1,4 @@
-use meralus_shared::{IPoint2D, Point3D, USizePoint3D};
+use mavelin_shared::{IPoint2D, Point3D, USizePoint3D};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

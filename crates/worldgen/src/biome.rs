@@ -1,5 +1,5 @@
-use meralus_shared::{DPoint3D, IPoint2D, Random};
-use meralus_world::BiomeBase;
+use mavelin_shared::{DPoint3D, IPoint2D, Random};
+use mavelin_world::Biome;
 
 use super::noise;
 
@@ -10,7 +10,7 @@ pub struct BiomeGenerator {
 }
 
 pub struct BiomeNoise {
-    pub biomes: Vec<BiomeBase>,
+    pub biomes: Vec<Biome>,
     pub temp: Vec<f64>,
     pub rain: Vec<f64>,
 }
@@ -43,7 +43,7 @@ impl BiomeGenerator {
             .base
             .generate_noise2d(origin.as_dvec2(), size, DPoint3D::new(0.25, 0.25, 0.588_235_294_117_647_1), 0.5);
 
-        let mut biomes = vec![BiomeBase::Sky; size.x as usize * size.y as usize];
+        let mut biomes = vec![Biome::Sky; size.x as usize * size.y as usize];
         let mut index = 0;
 
         for _ in 0..size.x {
@@ -61,7 +61,7 @@ impl BiomeGenerator {
 
                 temp[index] = temperature;
                 rain[index] = raininess;
-                biomes[index] = BiomeBase::new(temperature, raininess);
+                biomes[index] = Biome::new(temperature, raininess);
 
                 index += 1;
             }

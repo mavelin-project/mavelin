@@ -6,18 +6,20 @@ use std::{
 };
 
 use ahash::{HashMap, HashSet};
-use horns::{RenderBackend, RenderInfo, RenderPass, SampledTexture2d};
+use mavelin_engine::WindowContext;
 #[cfg(feature = "multiplayer")]
-use meralus_network::{IncomingPacket, OutgoingPacket, Uuid};
-use meralus_physics::{Aabb, PhysicsBody, PhysicsContext};
-use meralus_shared::{Color, Face, IPoint2D, IPoint3D, Point2D, Point3D, Ranged, Rect, Size2D, Size3D, Transform3D, USize2D, USizePoint3D, Vector2D, Vector3D};
-use meralus_storage::Block;
-use meralus_tween::{RepeatMode, Tween};
-use meralus_world::{
-    BfsLight, BlockSource, CHUNK_HEIGHT, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, LocalChunkManager, SUBCHUNK_COUNT, SUBCHUNK_SIZE,
-    SubChunkBlockState,
+use mavelin_network::{IncomingPacket, OutgoingPacket, Uuid};
+use mavelin_physics::{Aabb, PhysicsBody, PhysicsContext};
+use mavelin_shared::{
+    Color, Face, IPoint2D, IPoint3D, Point2D, Point3D, Ranged, Rect, Size2D, Size3D, Transform3D, USize2D, USizePoint2D, USizePoint3D, Vector2D, Vector3D,
 };
-use meralus_worldgen::ChunkGenerator;
+use mavelin_storage::Block;
+use mavelin_tween::{Animation, RepeatMode, Tween};
+use mavelin_world::{
+    BfsLight, Biome, BlockSource, CHUNK_HEIGHT, Chunk, ChunkAccess, ChunkCache, ChunkManager, ChunkStage, LightNode, LocalChunkManager, SUBCHUNK_COUNT,
+    SUBCHUNK_SIZE, SubChunkBlockState,
+};
+use mavelin_worldgen::ChunkGenerator;
 use tracing::info;
 
 use crate::{
@@ -27,11 +29,11 @@ use crate::{
     physics::{AabbProvider, LimitedAabbProvider},
     player::ItemType,
     render::{
+        RenderInfo,
         chunk::{ChunkRenderer, TranslucentSubchunk, VoxelFace, VoxelMeshBuilder},
         common::CommonRenderer,
     },
     settings::{Debugging, GraphicsSettings, Settings},
-    util::get_sky_color,
 };
 
 pub const GRASS_COLOR: Color = Color::from_hsl(120.0, 0.525, 0.525);
@@ -452,6 +454,12 @@ impl JobManager {
     }
 }
 
+pub struct WorldColors {
+    pub biome: Biome,
+    pub sky: Tween<Color>,
+    pub fog: Tween<Color>,
+}
+
 pub struct World {
     pub clock: Clock,
     pub tick_interval: Interval,
@@ -477,23 +485,42 @@ pub struct World {
 
     pub seed: u32,
     pub marked: Option<IPoint3D>,
+
+    pub colors: WorldColors,
 }
 
 impl World {
-    pub fn new(backend: &RenderBackend, resource_storage: Arc<ResourceStorage>, chunk_manager: ChunkManager<ChunkFileCache>, ty: WorldType) -> Self {
+    pub fn new(
+        context: &WindowContext,
+        texture: &wgpu::Texture,
+        lightmap: &wgpu::Texture,
+        resource_storage: Arc<ResourceStorage>,
+        chunk_manager: ChunkManager<ChunkFileCache>,
+        ty: WorldType,
+    ) -> Self {
         let mut player = Player::default();
 
         player.body.position = Point3D::new(2.0, 135.0, 2.0);
 
+        let sky = resource_storage.color_config.base_sky_color;
+        let fog = resource_storage.color_config.base_fog_color.unwrap_or(sky);
+
+        let colors = WorldColors {
+            biome: Biome::Sky,
+            sky: Tween::new(sky, sky, 1000),
+            fog: Tween::new(fog, fog, 1000),
+        };
+
         Self {
             camera: Camera::new(player.camera_position()),
-            chunk_renderer: ChunkRenderer::new(backend),
+            chunk_renderer: ChunkRenderer::new(context, texture, lightmap),
             tick_interval: Interval::new(TICK_RATE),
             physics_interval: Interval::new(PHYSICS_RATE),
             player,
             inventory_slot: Ranged::new(0, 0, 8),
             clock: Clock::default(),
             chunk_manager,
+            colors,
             job_manager: JobManager::new(),
             resource_storage: resource_storage.clone(),
             chat_history: Vec::new(),
@@ -738,7 +765,10 @@ impl World {
     }
 
     #[allow(clippy::too_many_lines)]
-    pub fn update(&mut self, backend: &RenderBackend, settings: GraphicsSettings, input: &Input, delta: Duration) {
+    pub fn update(&mut self, context: &WindowContext, settings: GraphicsSettings, input: &Input, delta: Duration) {
+        self.colors.sky.advance(delta);
+        self.colors.fog.advance(delta);
+
         if self.clock.active() {
             for _ in 0..self.physics_interval.update(delta) {
                 self.physics_step(input);
@@ -747,6 +777,21 @@ impl World {
             for _ in 0..self.tick_interval.update(delta) {
                 self.tick();
             }
+        }
+
+        if let Some(biome) = self.chunk_manager.get_biome(self.player.body.position.as_ivec3())
+            && self.colors.biome != biome
+        {
+            self.colors.biome = biome;
+
+            let base_sky = self.resource_storage.color_config.base_sky_color;
+            let base_fog = self.resource_storage.color_config.base_fog_color.unwrap_or(base_sky);
+            let (sky, fog) = self.resource_storage.color_config.biomes.get(&biome).map_or((base_sky, base_fog), |biome| {
+                (biome.sky_color.unwrap_or(base_sky), biome.fog_color.unwrap_or(base_fog))
+            });
+
+            self.colors.sky.set(sky);
+            self.colors.fog.set(fog);
         }
 
         for result in self.job_manager.receiver.try_iter() {
@@ -786,8 +831,8 @@ impl World {
 
                     for (subchunk_idx, mesh) in mesh.into_iter().rev().enumerate() {
                         let (solid, translucent) = mesh.into();
-                        let solid = VoxelMeshBuilder::build_from_slice(backend, &self.chunk_renderer.shader, &solid);
-                        let translucent = TranslucentSubchunk::new(backend, &self.chunk_renderer.shader, translucent, self.player.camera_position(), origin);
+                        let solid = VoxelMeshBuilder::build_from_slice(context.device, &solid);
+                        let translucent = TranslucentSubchunk::new(context.device, translucent, self.player.camera_position(), origin);
 
                         self.chunk_renderer.set_subchunk((origin, subchunk_idx), solid, translucent);
                     }
@@ -929,11 +974,10 @@ impl World {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
-        backend: &RenderBackend,
-        pass: &mut RenderPass,
+        context: &WindowContext,
+        view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
         common_renderer: &mut CommonRenderer,
-        texture_atlas: SampledTexture2d,
-        lightmap_atlas: SampledTexture2d,
         surface_size: USize2D,
         settings: &Settings,
         info: RenderInfo,
@@ -946,23 +990,47 @@ impl World {
         self.chunk_renderer
             .set_sun_position(if progress > 0.5 { 1.0 - progress } else { progress } * 2.0);
 
-        pass.clear_color_and_depth(Color::BLACK.to_linear_rgba(), 1.0);
+        // pass.clear_color_and_depth(Color::BLACK.to_linear_rgba(), 1.0);
 
-        let sky_color = get_sky_color(self.clock.get_visual_progress(), 0.0);
+        let sky_color = *self.colors.sky.get() /* get_sky_color(self.clock.get_visual_progress(), 0.0) */;
+        let fog_color = *self.colors.fog.get() /* get_sky_color(self.clock.get_visual_progress(), 0.0) */;
 
-        common_renderer.draw_rect(Point2D::ZERO, surface_size.as_vec2(), sky_color);
-        common_renderer.render(pass, backend, None, surface_size);
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Main Menu Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear({
+                        let [r, g, b, a]: [f32; 4] = sky_color.to_linear_rgba();
+                        let [r, g, b, a] = [f64::from(r), f64::from(g), f64::from(b), f64::from(a)];
 
-        self.chunk_renderer.set_fog_color(sky_color);
+                        wgpu::Color { r, g, b, a }
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &context.depth_texture.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
 
-        let rendered_subchunks = self.chunk_renderer.render(
-            pass,
-            self.camera.position,
-            &self.camera.frustum,
-            self.camera.matrix(),
-            texture_atlas,
-            lightmap_atlas,
-        );
+        let pass = &mut pass;
+
+        self.chunk_renderer.set_fog_color(fog_color);
+
+        let rendered_subchunks = self
+            .chunk_renderer
+            .render(context.queue, pass, self.camera.position, &self.camera.frustum, self.camera.world_matrix());
 
         let mut builder = VoxelMeshBuilder::with_capacity(self.entities.len());
 
@@ -970,7 +1038,7 @@ impl World {
             entity.render_to(&mut builder, &self.chunk_manager, self.resource_storage.as_ref());
         }
 
-        builder.render(backend, &self.chunk_renderer, pass, self.camera.world_matrix(), texture_atlas, lightmap_atlas);
+        builder.render(context, pass, &mut self.chunk_renderer, self.camera.world_matrix());
 
         // self.kawase.apply(backend, &self.scene).unwrap();
 
@@ -981,16 +1049,17 @@ impl World {
             common_renderer.draw_rect(Point2D::ZERO, surface_size.as_vec2(), Color::from_hsl(215.0, 1.0, 0.6).with_alpha(0.5));
         }
 
-        self.render_hotbar(backend, pass, texture_atlas, lightmap_atlas, common_renderer, surface_size);
+        self.render_hotbar(context, common_renderer, surface_size);
 
         if settings.debugging.enabled {
-            self.render_debug_text(common_renderer, backend, settings.graphics, rendered_subchunks.draw_calls, surface_size);
-            self.render_chunk_map(common_renderer, surface_size);
+            self.render_debug_text(common_renderer, context, settings.graphics, rendered_subchunks.draw_calls, surface_size);
+            self.render_chunk_map(context.queue, common_renderer, surface_size);
 
-            Self::render_fps_stat(common_renderer, &settings.debugging, delta, surface_size);
-            Self::render_draw_calls_stat(common_renderer, &settings.debugging, info, surface_size);
+            Self::render_fps_stat(context.queue, common_renderer, &settings.debugging, delta, surface_size);
+            Self::render_draw_calls_stat(context.queue, common_renderer, &settings.debugging, info, surface_size);
         } else {
             common_renderer.draw_text(
+                context.queue,
                 Point2D::new(8.0, 4.0),
                 "default",
                 "Press F3 to view debug information.",
@@ -1000,7 +1069,52 @@ impl World {
             );
         }
 
-        common_renderer.render(pass, backend, None, surface_size);
+        common_renderer.render(pass, context);
+
+        let mut builder = VoxelMeshBuilder::with_capacity(self.player.inventory.get_hotbar_items().count());
+
+        let matrix = Transform3D::from_rotation_x(const { 200f32.to_radians() })
+            * Transform3D::from_rotation_y(const { 35f32.to_radians() })
+            * Transform3D::from_rotation_z(0.0);
+
+        for (i, item) in self.player.inventory.get_hotbar_items() {
+            const INVENTORY_HOTBAR_SLOTS: u8 = 8;
+            const SLOT_SIZE: f32 = 48f32;
+            const SIZE: f32 = SLOT_SIZE * 0.6;
+            const ORIGIN: Point3D = Point3D::new(SIZE / 2.0, SIZE / 2.0, SIZE / 2.0);
+            const HOTBAR_WIDTH: f32 = (INVENTORY_HOTBAR_SLOTS + 1) as f32 * SLOT_SIZE;
+
+            let model = self
+                .resource_storage
+                .models
+                .get_unchecked(self.resource_storage.blocks.get_model_by_name(item.id));
+
+            let size = surface_size.as_vec2();
+            let origin = Point2D::new(
+                (size.x / 2.0) - (HOTBAR_WIDTH / 2.0) + ((SLOT_SIZE - SIZE) / 2.0),
+                size.y - SLOT_SIZE - 8.0 + ((SLOT_SIZE - SIZE) / 2.0),
+            );
+
+            let slot_offset = (origin + Point2D::new(i as f32 * SLOT_SIZE, 0.0)).extend(20.0);
+
+            for element in &model.elements {
+                for model_face in &element.faces {
+                    builder.push_transformed(
+                        &VoxelFace {
+                            position: slot_offset,
+                            vertices: model_face.face_data.vertices.map(|vertex| vertex * SIZE),
+                            lights: [240; 4],
+                            uvs: model_face.face_data.uvs,
+                            color: if model_face.tint { GRASS_COLOR } else { Color::WHITE }.multiply_rgb(model_face.face_data.face.get_light_level()),
+                        },
+                        &matrix,
+                        ORIGIN,
+                    );
+                }
+            }
+        }
+
+        builder.render_full_bright(context, pass, &mut self.chunk_renderer, common_renderer.window_matrix());
     }
 
     #[inline]
@@ -1010,7 +1124,7 @@ impl World {
             .is_some_and(|block| block.id == self.resource_storage.get_block_id("game:water"))
     }
 
-    fn render_chunk_map(&self, context: &mut CommonRenderer, surface_size: USize2D) {
+    fn render_chunk_map(&self, queue: &wgpu::Queue, context: &mut CommonRenderer, surface_size: USize2D) {
         const CHUNK_UI_CONTAINER_SIZE: Size2D = Size2D::new(128.0, 128.0);
         const CHUNK_UI_COUNT: usize = 16;
         const SPACING: f32 = 1.0;
@@ -1069,6 +1183,7 @@ impl World {
 
         context.draw_rect(new_container_origin, Size2D::new(text.x + 8.0, 20.0), Color::from_u32_rgb(0x1D211B));
         context.draw_text(
+            queue,
             new_container_origin + Point2D::splat(4.0),
             "default",
             format!(
@@ -1092,6 +1207,7 @@ impl World {
 
         context.draw_rect(new_container_origin, Size2D::new(text.x + 8.0, 20.0), Color::from_u32_rgb(0x1D211B));
         context.draw_text(
+            queue,
             new_container_origin + Point2D::splat(4.0),
             "default",
             format!("{:?}", self.chunk_manager.get_biome(self.player.body.position.as_ivec3())),
@@ -1104,7 +1220,7 @@ impl World {
     fn render_debug_text(
         &self,
         context: &mut CommonRenderer,
-        backend: &RenderBackend,
+        backend: &WindowContext,
         GraphicsSettings { render_shape, vsync, .. }: GraphicsSettings,
         rendered_subchunks: usize,
         USize2D { x, y }: USize2D,
@@ -1118,13 +1234,18 @@ impl World {
             (hours, minutes)
         };
 
-        let version = backend.get_opengl_version_string();
-        let renderer = backend.get_opengl_renderer_string();
-        let vendor = backend.get_opengl_vendor_string();
-        let free_memory = backend
-            .get_free_video_memory()
-            .map_or_else(|| String::from("unknown"), crate::util::format_bytes);
+        let info = backend.adapter.get_info();
+        let renderer = match info.backend {
+            wgpu::Backend::Noop => "Noop",
+            wgpu::Backend::Vulkan => "Vulkan",
+            wgpu::Backend::Metal => "Metal",
+            wgpu::Backend::Dx12 => "DirectX 12",
+            wgpu::Backend::Gl => "OpenGL",
+            wgpu::Backend::BrowserWebGpu => "WebGPU",
+        };
 
+        let gpu = info.name;
+        let version = info.driver_info;
         let block = self
             .camera
             .looking_at
@@ -1159,11 +1280,10 @@ impl World {
         let total_subchunks = total_chunks * SUBCHUNK_COUNT;
 
         let text = format!(
-            "OpenGL {version}
-OpenGL Renderer: {renderer}
-OpenGL Vendor: {vendor}
-Free GPU memory: {free_memory}
-Window size: {x}x{y}
+            "Render Backend: {renderer}
+GPU: {gpu}
+Version: {version}
+Surface size: {x}x{y}
 Game Time: {hours:02}:{minutes:02}
 Looking at {block}
 VSync: {vsync}
@@ -1176,18 +1296,10 @@ Rendered subchunks: {rendered_subchunks} / {total_subchunks} ({total_chunks} tot
         // Rect::new(Point2D::new(12.0, 12.0), Size2D::new((522.0 +
         // 4.0) * overlay_width, text_size.y + 4.0));
 
-        context.draw_text(Point2D::new(8.0, 4.0), "default", text, Color::WHITE, 18.0, None);
+        context.draw_text(backend.queue, Point2D::new(8.0, 4.0), "default", text, Color::WHITE, 18.0, None);
     }
 
-    fn render_hotbar(
-        &self,
-        backend: &RenderBackend,
-        pass: &mut RenderPass,
-        texture_atlas: SampledTexture2d,
-        lightmap_atlas: SampledTexture2d,
-        context: &mut CommonRenderer,
-        surface_size: USize2D,
-    ) {
+    fn render_hotbar(&self, backend: &WindowContext, context: &mut CommonRenderer, surface_size: USize2D) {
         const INVENTORY_HOTBAR_SLOTS: u8 = 8;
         const SLOT_SIZE: f32 = 48f32;
 
@@ -1213,50 +1325,6 @@ Rendered subchunks: {rendered_subchunks} / {total_subchunks} ({total_chunks} tot
             Color::from_u32_rgb(0x1D211B),
         );
 
-        context.render(pass, backend, None, surface_size);
-
-        let mut builder = VoxelMeshBuilder::with_capacity(self.player.inventory.get_hotbar_items().count());
-
-        let matrix = Transform3D::from_rotation_x(const { 200f32.to_radians() })
-            * Transform3D::from_rotation_y(const { 35f32.to_radians() })
-            * Transform3D::from_rotation_z(0.0);
-
-        for (i, item) in self.player.inventory.get_hotbar_items() {
-            const SIZE: f32 = SLOT_SIZE * 0.6;
-            const ORIGIN: Point3D = Point3D::new(SIZE / 2.0, SIZE / 2.0, SIZE / 2.0);
-            const HOTBAR_WIDTH: f32 = (INVENTORY_HOTBAR_SLOTS + 1) as f32 * SLOT_SIZE;
-
-            let model = self
-                .resource_storage
-                .models
-                .get_unchecked(self.resource_storage.blocks.get_model_by_name(item.id));
-
-            let origin = Point2D::new(
-                (bounds.size.x / 2.0) - (HOTBAR_WIDTH / 2.0) + ((SLOT_SIZE - SIZE) / 2.0),
-                bounds.size.y - SLOT_SIZE - 8.0 + ((SLOT_SIZE - SIZE) / 2.0),
-            );
-
-            let slot_offset = (origin + Point2D::new(i as f32 * SLOT_SIZE, 0.0)).extend(20.0);
-
-            for element in &model.elements {
-                for model_face in &element.faces {
-                    builder.push_transformed(
-                        &VoxelFace {
-                            position: slot_offset,
-                            vertices: model_face.face_data.vertices.map(|vertex| vertex * SIZE),
-                            lights: [240; 4],
-                            uvs: model_face.face_data.uvs,
-                            color: if model_face.tint { GRASS_COLOR } else { Color::WHITE }.multiply_rgb(model_face.face_data.face.get_light_level()),
-                        },
-                        &matrix,
-                        ORIGIN,
-                    );
-                }
-            }
-        }
-
-        builder.render_full_bright(backend, &self.chunk_renderer, pass, context.window_matrix(), texture_atlas, lightmap_atlas);
-
         let hotbar_width = f32::from(INVENTORY_HOTBAR_SLOTS + 1) * SLOT_SIZE;
         let origin = Point2D::new((bounds.size.x / 2.0) - (hotbar_width / 2.0), bounds.size.y - SLOT_SIZE - 8.0);
 
@@ -1267,6 +1335,7 @@ Rendered subchunks: {rendered_subchunks} / {total_subchunks} ({total_chunks} tot
             let text_size = context.measure("default", &text, 18.0, None).unwrap();
 
             context.draw_text(
+                backend.queue,
                 origin.with_y(bounds.size.y - 10.0 - 21.0) + Point2D::new(offset - 3.0 - text_size.x, 0.0),
                 "default",
                 text,
@@ -1275,11 +1344,9 @@ Rendered subchunks: {rendered_subchunks} / {total_subchunks} ({total_chunks} tot
                 None,
             );
         }
-
-        context.render(pass, backend, None, surface_size);
     }
 
-    fn render_draw_calls_stat(context: &mut CommonRenderer, debugging: &Debugging, info: RenderInfo, surface_size: USize2D) {
+    fn render_draw_calls_stat(queue: &wgpu::Queue, context: &mut CommonRenderer, debugging: &Debugging, info: RenderInfo, surface_size: USize2D) {
         const SPACING: f32 = 1.0;
         const SIZE: Size2D = Size2D::new(100.0 * (2.0 + SPACING), 96.0);
         const CONTAINER_SIZE: Size2D = Size2D::new(SIZE.x - SPACING, SIZE.y);
@@ -1314,6 +1381,7 @@ Rendered subchunks: {rendered_subchunks} / {total_subchunks} ({total_chunks} tot
 
         context.draw_rect(container_origin + Point2D::splat(4.0), text, Color::from_u32_rgb(0x1D211B));
         context.draw_text(
+            queue,
             container_origin + Point2D::splat(4.0),
             "default",
             format!("draw calls: {}\nvertices: {}", info.draw_calls, info.vertices),
@@ -1323,7 +1391,7 @@ Rendered subchunks: {rendered_subchunks} / {total_subchunks} ({total_chunks} tot
         );
     }
 
-    fn render_fps_stat(context: &mut CommonRenderer, debugging: &Debugging, delta: Duration, surface_size: USize2D) {
+    fn render_fps_stat(queue: &wgpu::Queue, context: &mut CommonRenderer, debugging: &Debugging, delta: Duration, surface_size: USize2D) {
         const SPACING: f32 = 1.0;
         const SIZE: Size2D = Size2D::new(100.0 * (2.0 + SPACING), 96.0);
         const CONTAINER_SIZE: Size2D = Size2D::new(SIZE.x - SPACING, SIZE.y);
@@ -1370,6 +1438,7 @@ Rendered subchunks: {rendered_subchunks} / {total_subchunks} ({total_chunks} tot
         );
 
         context.draw_text(
+            queue,
             bounds.origin + bounds.size.with_x(8.0) - CONTAINER_SIZE.with_x(0.0) - Point2D::new(0.0, 4.0),
             "default",
             format!("fps: {:.0} ({:.2}ms)", 1.0 / delta.as_secs_f32(), delta.as_secs_f32() * 1000.0),
@@ -1443,12 +1512,12 @@ impl<'a, C: ChunkAccess> WorldSnapshot<'a, C> {
             }) {
                 let world_position = chunk.to_world(local_position);
                 let neighbours = Face::NORMALS.map(|face| self.chunk_manager.get_block(world_position + face).filter(|b| !b.is_air()));
+                let biome = chunk.get_biome_unchecked(USizePoint2D::new(local_position.x, local_position.z));
 
-                let (cull_if_same, tint_color): (bool, Option<Color>) = self
-                    .resource_storage
-                    .blocks
-                    .get(state.id)
-                    .map_or((false, None), |block: &dyn Block| (block.cull_if_same(), block.tint_color()));
+                let (cull_if_same, tint_color): (bool, Option<Color>) =
+                    self.resource_storage.blocks.get(state.id).map_or((false, None), |block: &dyn Block| {
+                        (block.cull_if_same(), block.tint_color(&self.resource_storage.color_config, biome))
+                    });
 
                 for element in &model.elements {
                     for model_face in &element.faces {

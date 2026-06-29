@@ -2,8 +2,8 @@
 
 // use ahash::{HashMap, HashMapExt};
 // use glam::{IVec2, USizeVec3, Vec3};
-// use meralus_shared::{IncomingPacket, OutgoingPacket, Player,
-// ServerConnection}; use meralus_world::{BfsLight, Chunk, ChunkGenerator,
+// use mavelin_shared::{IncomingPacket, OutgoingPacket, Player,
+// ServerConnection}; use mavelin_world::{BfsLight, Chunk, ChunkGenerator,
 // ChunkManager, LightNode, SUBCHUNK_SIZE}; use tokio::{
 //     fs,
 //     net::TcpListener,
@@ -308,7 +308,7 @@
 // mod tests {
 //     use async_compression::tokio::write::{ZlibDecoder, ZlibEncoder};
 //     use glam::IVec2;
-//     use meralus_world::Chunk;
+//     use mavelin_world::Chunk;
 //     use tokio::io::AsyncWriteExt;
 
 //     #[tokio::test]
@@ -341,9 +341,9 @@
 //         // assert_eq!(chunk.light_levels, deserialized.light_levels);
 //     }
 // }
-use meralus_network as _;
-use meralus_shared as _;
-use meralus_world as _;
+use mavelin_network as _;
+use mavelin_shared as _;
+use mavelin_world as _;
 use tokio as _;
 
 const fn main() {}

@@ -1,13 +1,15 @@
 [package]
-name = "meralus-io"
+name = "mavelin-io"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ahash.workspace = true
-meralus-shared = { workspace = true, features = ["geometry", "face", "serde"] }
 serde.workspace = true
+ahash.workspace = true
+mavelin-shared = { workspace = true, features = ["geometry", "face", "serde"] }
+mavelin-world = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
+toml = "1.1.2"
 
 [lints]
 workspace = true

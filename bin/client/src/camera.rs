@@ -1,5 +1,5 @@
-use meralus_physics::{AabbSource, PhysicsContext, RayCastResult};
-use meralus_shared::{FrustumCulling, Point3D, Transform3D, Vector3D};
+use mavelin_physics::{AabbSource, PhysicsContext, RayCastResult};
+use mavelin_shared::{FrustumCulling, Point3D, Transform3D, Vector3D};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
@@ -100,6 +100,7 @@ impl Camera {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn matrix(&self) -> Transform3D {
         self.projection() * self.view()
     }

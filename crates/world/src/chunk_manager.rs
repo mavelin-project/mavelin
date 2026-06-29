@@ -4,9 +4,9 @@ use std::{
 };
 
 use ahash::HashMap;
-use meralus_shared::{Face, IPoint2D, IPoint3D, USizePoint2D, USizePoint3D};
+use mavelin_shared::{Face, IPoint2D, IPoint3D, USizePoint2D, USizePoint3D};
 
-use crate::{BfsLight, BiomeBase, BlockSource, Chunk, LightNode, SUBCHUNK_COUNT_I32, SUBCHUNK_SIZE, SUBCHUNK_SIZE_I32, chunk::SubChunkBlockState};
+use crate::{BfsLight, Biome, BlockSource, Chunk, LightNode, SUBCHUNK_COUNT_I32, SUBCHUNK_SIZE, SUBCHUNK_SIZE_I32, chunk::SubChunkBlockState};
 
 pub trait ChunkCache {
     fn all(&self) -> impl Iterator<Item = Chunk>;
@@ -422,7 +422,7 @@ impl<C: ChunkCache> ChunkManager<C> {
         self.get_chunk(Self::to_local(position)).map(|_| Chunk::to_local(position))
     }
 
-    pub fn get_biome(&self, position: IPoint3D) -> Option<BiomeBase> {
+    pub fn get_biome(&self, position: IPoint3D) -> Option<Biome> {
         if position.y >= 0 && position.y < const { SUBCHUNK_SIZE_I32 * SUBCHUNK_COUNT_I32 } {
             let chunk = self.get_chunk(Self::to_local(position))?;
             let local = Chunk::to_local(position);

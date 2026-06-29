@@ -1,5 +1,5 @@
-use meralus_shared::{DPoint2D, DPoint3D, IPoint2D, IPoint3D, Random};
-use meralus_world::new_boxed_array;
+use mavelin_shared::{DPoint2D, DPoint3D, IPoint2D, IPoint3D, Random};
+use mavelin_world::new_boxed_array;
 
 use super::Perlin;
 use crate::TERRAIN_NOISE_SIZE;

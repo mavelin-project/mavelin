@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use meralus_shared::{DPoint2D, DPoint3D, IPoint2D, IPoint3D, Random};
+use mavelin_shared::{DPoint2D, DPoint3D, IPoint2D, IPoint3D, Random};
 
 pub struct Perlin {
     permute_table: [i32; 512],

@@ -28,14 +28,13 @@ use std::{
 };
 
 use cpal::traits::HostTrait;
-use horns::{MagnifyFilter, MinifyFilter, RenderBackend, Texture2d};
 use kira::{AudioManager, AudioManagerSettings, backend::cpal::CpalBackendSettings};
-use meralus_engine::{Application, CursorGrabMode, KeyCode, KeyboardModifiers, MouseButton, State, WindowContext};
-use meralus_physics::PhysicsContext;
-use meralus_shared::{AsValue, Color, Point2D, Point3D, Transform3D, USize2D, Vector2D};
-use meralus_storage::{Block, ResourceStorage, TextureStorage};
-use meralus_tween::{Animation, Tween};
-use meralus_world::{BlockSource, ChunkManager};
+use mavelin_engine::{Application, CursorGrabMode, KeyCode, KeyboardModifiers, MouseButton, State, WindowContext};
+use mavelin_physics::PhysicsContext;
+use mavelin_shared::{Color, Point2D, Point3D, Transform3D, USize2D, Vector2D};
+use mavelin_storage::{Block, ResourceStorage, TextureStorage};
+use mavelin_tween::{Animation, Tween};
+use mavelin_world::{BlockSource, ChunkManager};
 use tracing::info;
 
 use crate::{
@@ -67,7 +66,7 @@ pub const PHYSICS_RATE: Duration = Duration::from_secs(1).checked_div(60).expect
 enum Action {
     ReplaceResourceManager(ResourceStorage),
     #[cfg(feature = "addons")]
-    ReplaceAddonManager(meralus_addons::AddonManager),
+    ReplaceAddonManager(mavelin_addons::AddonManager),
 }
 
 struct GameLoop {
@@ -81,12 +80,12 @@ struct GameLoop {
     action_receiver: mpsc::Receiver<Action>,
 
     #[cfg(feature = "addons")]
-    addons: meralus_addons::AddonManager,
+    addons: mavelin_addons::AddonManager,
 
     // scene: WorldScene,
     // kawase: DualKawase<4>,
-    texture_atlas: Texture2d,
-    lightmap_atlas: Texture2d,
+    texture_atlas: wgpu::Texture,
+    lightmap_atlas: wgpu::Texture,
 
     context: UiContext,
     overlay: LoadingOverlay,
@@ -110,7 +109,7 @@ fn register_block<T: Block + 'static>(
 }
 
 impl GameLoop {
-    fn handle_shortcuts(&mut self, context: WindowContext, _: &RenderBackend) {
+    fn handle_shortcuts(&mut self, context: WindowContext) {
         if self.input.keyboard.is_key_pressed_once(KeyCode::F3) {
             self.settings.debugging.enabled = !self.settings.debugging.enabled;
         }
@@ -170,9 +169,10 @@ impl State for GameLoop {
     type Args = ();
 
     const ICON: Option<&str> = Some("./resources/icon.png");
-    const NAME: &str = "Meralus";
+    const NAME: &str = "Mavelin";
 
-    fn new(window: WindowContext, backend: &RenderBackend, (): Self::Args) -> Self {
+    #[allow(clippy::too_many_lines)]
+    fn new(context: WindowContext, (): Self::Args) -> Self {
         let (tx, rx) = mpsc::channel();
         let (action_sender, action_receiver) = mpsc::channel();
 
@@ -219,7 +219,7 @@ impl State for GameLoop {
             {
                 sender.new_stage("Loading addons", 1);
 
-                let mut addons = meralus_addons::AddonManager::new("./addons").unwrap();
+                let mut addons = mavelin_addons::AddonManager::new("./addons").unwrap();
 
                 addons.insert_mappings(&mut resources);
                 addons.execute(&mut resources);
@@ -240,13 +240,13 @@ impl State for GameLoop {
             sender.set_visible(false)
         });
 
-        let size = window.window_size().as_vec2();
+        let size = context.window_size().as_vec2();
 
-        let mut common_renderer = CommonRenderer::new(backend).unwrap_or_else(|e| panic!("failed to create CommonRenderer: {e}"));
+        let mut common_renderer = CommonRenderer::new(&context);
 
         common_renderer.add_font("default", include_bytes!("../../../resources/fonts/Monocraft.ttf"));
         common_renderer.add_font("default_bold", include_bytes!("../../../resources/fonts/Monocraft-Bold.ttf"));
-        common_renderer.set_window_matrix(Transform3D::orthographic_rh_gl(0.0, size.x, size.y, 0.0, -100.0, 100.0));
+        common_renderer.set_window_matrix(context.queue, Transform3D::orthographic_rh(0.0, size.x, size.y, 0.0, -100.0, 100.0));
 
         // let sounds = fs::read_dir("./resources/sounds")
         //     .unwrap()
@@ -263,6 +263,21 @@ impl State for GameLoop {
         //         }
         //     })
         //     .collect();
+
+        let texture_descriptor = wgpu::TextureDescriptor {
+            size: wgpu::Extent3d {
+                width: TextureStorage::ATLAS_SIZE.into(),
+                height: TextureStorage::ATLAS_SIZE.into(),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 5,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            label: None,
+            view_formats: &[],
+        };
 
         Self {
             audio_manager: AudioManager::new(AudioManagerSettings {
@@ -286,17 +301,19 @@ impl State for GameLoop {
             current_page: Page::Main,
             resource_manager,
             #[cfg(feature = "addons")]
-            addons: meralus_addons::AddonManager::new("./addons").unwrap(),
+            addons: mavelin_addons::AddonManager::new("./addons").unwrap(),
             action_receiver,
             world: None,
             settings: Settings::default(),
             progress: Progress::new(rx),
-            texture_atlas: backend
-                .create_empty_texture2d_with_mipmaps(TextureStorage::ATLAS_SIZE.into(), TextureStorage::ATLAS_SIZE.into(), 4)
-                .unwrap_or_else(|e| panic!("failed to create empty texture atlas on GPU: {e}")),
-            lightmap_atlas: backend
-                .create_empty_texture2d_with_mipmaps(TextureStorage::ATLAS_SIZE.into(), TextureStorage::ATLAS_SIZE.into(), 4)
-                .unwrap_or_else(|e| panic!("failed to create empty texture atlas on GPU: {e}")),
+            texture_atlas: context.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Texture Atlas"),
+                ..texture_descriptor
+            }),
+            lightmap_atlas: context.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("LightMap Atlas"),
+                ..texture_descriptor
+            }),
             // scene: WorldScene::new(backend, width, height).unwrap(),
             // kawase: DualKawase::new(backend, width, height).unwrap(),
             context: UiContext::new(),
@@ -307,14 +324,14 @@ impl State for GameLoop {
         }
     }
 
-    fn handle_window_resize(&mut self, _facade: &RenderBackend, size: USize2D, _scale_factor: f64) {
+    fn handle_window_resize(&mut self, context: WindowContext, size: USize2D, _scale_factor: f64) {
         // self.scene.resize(facade, size.to_array()).unwrap();
         // self.kawase.resize(facade, size.to_array()).unwrap();
 
         let size = size.as_vec2();
 
         self.common_renderer
-            .set_window_matrix(Transform3D::orthographic_rh_gl(0.0, size.x, size.y, 0.0, -1000.0, 1000.0));
+            .set_window_matrix(context.queue, Transform3D::orthographic_rh(0.0, size.x, size.y, 0.0, -1000.0, 1000.0));
 
         if let Some(world) = &mut self.world {
             world.camera.aspect_ratio = size.x / size.y;
@@ -363,8 +380,8 @@ impl State for GameLoop {
     }
 
     #[allow(clippy::too_many_lines, clippy::significant_drop_tightening)]
-    fn update(&mut self, context: WindowContext, backend: &RenderBackend, delta: Duration) {
-        self.handle_shortcuts(context, backend);
+    fn update(&mut self, context: WindowContext, delta: Duration) {
+        self.handle_shortcuts(context);
 
         if let Some(world) = &mut self.world {
             if self.input.mouse.is_pressed_once(MouseButton::Left) {
@@ -373,7 +390,7 @@ impl State for GameLoop {
                 world.place_held();
             }
 
-            world.update(backend, self.settings.graphics, &self.input, delta);
+            world.update(&context, self.settings.graphics, &self.input, delta);
 
             for (_, drop) in &mut world.entities {
                 if let EntityData::Item { transition, .. } = &mut drop.data {
@@ -383,7 +400,8 @@ impl State for GameLoop {
         }
 
         self.overlay.update(delta);
-        self.progress.update(&self.texture_atlas, &self.lightmap_atlas, &self.resource_manager);
+        self.progress
+            .update(context.queue, &self.texture_atlas, &self.lightmap_atlas, &self.resource_manager);
         self.context.update();
 
         if self.input.mouse.is_released(MouseButton::Left) {
@@ -409,7 +427,13 @@ impl State for GameLoop {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn render(&mut self, window_context: WindowContext, backend: &RenderBackend, delta: Duration) {
+    fn render(&mut self, context: WindowContext, delta: Duration) {
+        let Some(output) = context.get_surface_texture() else {
+            return;
+        };
+
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         if self.settings.debugging.fps_stat.len() >= 100 {
             self.settings.debugging.fps_stat.pop_front();
         }
@@ -419,63 +443,96 @@ impl State for GameLoop {
 
         let info = self.settings.debugging.render_info.take();
 
-        let (width, height) = window_context.window_size().into();
-        let mut pass = backend.begin_pass();
+        let (width, height) = context.window_size().into();
+        let mut encoder = context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Mavelin Command Encoder"),
+        });
 
-        if let Some(world) = self.world.as_mut() {
-            world.render(
-                backend,
-                &mut pass,
-                &mut self.common_renderer,
-                self.texture_atlas.with_filters(MinifyFilter::NearestMipmapLinear, MagnifyFilter::Nearest),
-                self.lightmap_atlas.with_filters(MinifyFilter::NearestMipmapLinear, MagnifyFilter::Nearest),
-                USize2D::new(width, height),
-                &self.settings,
-                info,
-                delta,
-            );
-        } else {
-            pass.clear_color_and_depth(Color::from_u32_rgb(0x1D211B).as_value(), 1.0);
+        {
+            if let Some(world) = self.world.as_mut() {
+                world.render(
+                    &context,
+                    &view,
+                    &mut encoder,
+                    &mut self.common_renderer,
+                    USize2D::new(width, height),
+                    &self.settings,
+                    info,
+                    delta,
+                );
+            } else {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Main Menu Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear({
+                                let [r, g, b, a]: [f32; 4] = Color::from_u32_rgb(0x1D211B).to_linear_rgba();
+                                let [r, g, b, a] = [f64::from(r), f64::from(g), f64::from(b), f64::from(a)];
 
-            let mut root = self.context.root(&self.common_renderer, window_context.window_size().as_vec2());
+                                wgpu::Color { r, g, b, a }
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &context.depth_texture.view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                    multiview_mask: None,
+                });
+                // pass.clear_color_and_depth(Color::from_u32_rgb(0x1D211B).as_value(), 1.0);
 
-            if matches!(self.current_page, Page::Main) {
-                match MainScreen.render(&mut root) {
-                    Some(MainScreenAction::StartGame) => {
-                        self.world.replace(apply_world_template(
-                            World::new(
-                                backend,
-                                self.resource_manager.clone(),
-                                ChunkManager::new(world::ChunkFileCache {
-                                    root: PathBuf::from("./worlds/WRD128-0"),
-                                }),
-                                WorldType::Local,
-                            ),
-                            &self.resource_manager,
-                            window_context.window_size().as_vec2(),
-                        ));
+                let mut root = self.context.root(&self.common_renderer, context.window_size().as_vec2());
+
+                if matches!(self.current_page, Page::Main) {
+                    match MainScreen.render(&mut root) {
+                        Some(MainScreenAction::StartGame) => {
+                            self.world.replace(apply_world_template(
+                                World::new(
+                                    &context,
+                                    &self.texture_atlas,
+                                    &self.lightmap_atlas,
+                                    self.resource_manager.clone(),
+                                    ChunkManager::new(world::ChunkFileCache {
+                                        root: PathBuf::from("./worlds/WRD128-0"),
+                                    }),
+                                    WorldType::Local,
+                                ),
+                                &self.resource_manager,
+                                context.window_size().as_vec2(),
+                            ));
+                        }
+                        Some(MainScreenAction::CloseWindow) => context.close_window(),
+                        _ => (),
                     }
-                    Some(MainScreenAction::CloseWindow) => window_context.close_window(),
-                    _ => (),
                 }
+
+                self.overlay.render(&mut root);
+
+                drop(root);
+
+                self.context.paint_root(&mut self.common_renderer, context.queue);
+
+                _ = self.common_renderer.render(&mut pass, &context);
             }
-
-            self.overlay.render(&mut root);
-
-            drop(root);
-
-            self.context.paint_root(&mut self.common_renderer);
-
-            _ = self.common_renderer.render(&mut pass, backend, None, window_context.window_size());
         }
 
         if self.settings.debugging.draw_calls_stat.len() >= 100 {
             self.settings.debugging.draw_calls_stat.pop_front();
         }
 
-        window_context.pre_present_notify();
-
-        let info = pass.finish(backend);
+        context.pre_present_notify();
+        context.queue.submit([encoder.finish()]);
+        context.queue.present(output);
 
         self.settings.debugging.draw_calls_stat.push_back(info.draw_calls);
         self.settings.debugging.draw_calls_max = self.settings.debugging.draw_calls_max.max(info.draw_calls);

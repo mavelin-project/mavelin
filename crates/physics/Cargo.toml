@@ -1,10 +1,10 @@
 [package]
-name = "meralus-physics"
+name = "mavelin-physics"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-meralus-shared = { workspace = true, features = ["geometry", "face"] }
+mavelin-shared = { workspace = true, features = ["geometry", "face"] }
 
 [lints]
 workspace = true

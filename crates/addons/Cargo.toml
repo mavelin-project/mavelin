@@ -1,5 +1,5 @@
 [package]
-name = "meralus-addons"
+name = "mavelin-addons"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,8 +8,8 @@ workspace = true
 
 [dependencies]
 ariadne = "0.6.0"
-meralus-storage.workspace = true
-mollie = { git = "https://github.com/meralus-project/mollie.git", features = ["ariadne"] }
+mavelin-storage.workspace = true
+mollie = { git = "https://github.com/mavelin-project/mollie.git", features = ["ariadne"] }
 serde.workspace = true
 toml = "1.0.4"
 tracing = "0.1.44"

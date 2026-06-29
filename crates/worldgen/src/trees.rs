@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
 use ahash::HashSet;
-use meralus_shared::{Face, IPoint3D, Random};
-use meralus_world::{CHUNK_HEIGHT_I32, ChunkAccess, ChunkManager, SubChunkBlockState};
+use mavelin_shared::{Face, IPoint3D, Random};
+use mavelin_world::{CHUNK_HEIGHT_I32, ChunkAccess, ChunkManager, SubChunkBlockState};
 
 struct QueuedCheck {
     pos: IPoint3D,

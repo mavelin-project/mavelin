@@ -38,12 +38,12 @@ jobs:
       - name: Install target
         run: rustup target add x86_64-unknown-linux-gnu
       - name: Build
-        run: cargo build --release --bin meralus-client --target x86_64-unknown-linux-gnu
+        run: cargo build --release --bin mavelin-client --target x86_64-unknown-linux-gnu
       - name: Compress
-        run: mkdir tmp && cp -r resources tmp && cp target/x86_64-unknown-linux-gnu/release/meralus-client tmp
+        run: mkdir tmp && cp -r resources tmp && cp target/x86_64-unknown-linux-gnu/release/mavelin-client tmp
       - uses: actions/upload-artifact@v7
         with:
-          name: meralus-client-linux
+          name: mavelin-client-linux
           path: tmp/**/*
   dev-build-win:
     runs-on: windows-latest
@@ -54,12 +54,12 @@ jobs:
       - name: Install target
         run: rustup target add x86_64-pc-windows-msvc
       - name: Build
-        run: cargo build --release --bin meralus-client --target x86_64-pc-windows-msvc
+        run: cargo build --release --bin mavelin-client --target x86_64-pc-windows-msvc
       - name: Compress
-        run: mkdir tmp && cp -r resources tmp && cp target/x86_64-pc-windows-msvc/release/meralus-client.exe tmp
+        run: mkdir tmp && cp -r resources tmp && cp target/x86_64-pc-windows-msvc/release/mavelin-client.exe tmp
       - uses: actions/upload-artifact@v7
         with:
-          name: meralus-client-win
+          name: mavelin-client-win
           path: tmp/**/*
   dev-build-macos:
     runs-on: macos-latest
@@ -70,10 +70,10 @@ jobs:
       - name: Install target
         run: rustup target add x86_64-apple-darwin
       - name: Build
-        run: cargo build --release --bin meralus-client --target x86_64-apple-darwin
+        run: cargo build --release --bin mavelin-client --target x86_64-apple-darwin
       - name: Compress
-        run: mkdir tmp && cp -r resources tmp && cp target/x86_64-apple-darwin/release/meralus-client tmp
+        run: mkdir tmp && cp -r resources tmp && cp target/x86_64-apple-darwin/release/mavelin-client tmp
       - uses: actions/upload-artifact@v7
         with:
-          name: meralus-client-macos
+          name: mavelin-client-macos
           path: tmp/**/*

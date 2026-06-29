@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use meralus_shared::{Face, IPoint2D, USizePoint3D};
+use mavelin_shared::{Face, IPoint2D, USizePoint3D};
 
 use crate::{BlockSource, CHUNK_HEIGHT, Chunk, ChunkAccess, SubChunk};
 

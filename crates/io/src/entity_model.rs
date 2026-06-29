@@ -1,5 +1,5 @@
 use ahash::HashMap;
-use meralus_shared::{Face, Point2D, Point3D, Size2D};
+use mavelin_shared::{Face, Point2D, Point3D, Size2D};
 use serde::{Deserialize, Serialize};
 
 use crate::TextureRef;

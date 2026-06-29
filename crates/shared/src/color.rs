@@ -5,6 +5,48 @@ use crate::AsValue;
 /// Color type represented as RGBA
 pub struct Color([u8; 4]);
 
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Color {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ColorVisitor;
+
+        impl serde::de::Visitor<'_> for ColorVisitor {
+            type Value = Color;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("valid hex color")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                let hex = v.strip_prefix('#').ok_or_else(|| serde::de::Error::custom("color should start with #"))?;
+                let red = u8::from_str_radix(&hex[0..2], 16).map_err(|_| serde::de::Error::custom("invalid red component"))?;
+                let green = u8::from_str_radix(&hex[2..4], 16).map_err(|_| serde::de::Error::custom("invalid green component"))?;
+                let blue = u8::from_str_radix(&hex[4..6], 16).map_err(|_| serde::de::Error::custom("invalid blue component"))?;
+
+                Ok(Color::new(red, green, blue, 255))
+            }
+        }
+
+        deserializer.deserialize_str(ColorVisitor)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Color {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("#{:02X}{:02X}{:02X}", self.0[0], self.0[1], self.0[2]))
+    }
+}
+
 impl AsValue<[f32; 4]> for Color {
     #[inline]
     fn as_value(&self) -> [f32; 4] {

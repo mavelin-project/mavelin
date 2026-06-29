@@ -1,9 +1,9 @@
 use std::{fs, path::Path};
 
-use meralus_io::{EntityElementData, EntityModel, TexturePath, TextureRef};
-use meralus_physics::Aabb;
-use meralus_shared::{DPoint3D, Face, Point2D, Point3D, Vector2D};
-use meralus_world::new_boxed_array;
+use mavelin_io::{EntityElementData, EntityModel, TexturePath, TextureRef};
+use mavelin_physics::Aabb;
+use mavelin_shared::{DPoint3D, Face, Point2D, Point3D, Vector2D};
+use mavelin_world::new_boxed_array;
 use tracing::info;
 
 use crate::{FaceData, FaceUV, LoadingError, LoadingResult, Mappings, ModelLoadingError, texture::TextureStorage};

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use meralus_shared::{Color, Point2D, Size2D};
-use meralus_tween::{Animation, Tween};
+use mavelin_shared::{Color, Point2D, Size2D};
+use mavelin_tween::{Animation, Tween};
 
 use crate::{
     render::context::{Arrangement, RowStrategy, UiSubcontext},
@@ -24,7 +24,7 @@ impl Screen for LoadingOverlay {
         //     scope.abs_pos(0.0, 24.0);
         //     scope.part_of_parent_width(1.0);
 
-        //     scope.text("MERALUS", 72.0, "default", Color::from_hsl(110.0, 0.4, 0.7));
+        //     scope.text("MAVELIN", 72.0, "default", Color::from_hsl(110.0, 0.4, 0.7));
         // });
 
         scope.column(|scope| {

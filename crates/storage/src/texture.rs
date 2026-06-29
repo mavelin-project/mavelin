@@ -2,8 +2,8 @@ use core::fmt;
 use std::{io, path::Path};
 
 use image::RgbaImage;
+use mavelin_shared::{Point2D, USize2D, Vector2D};
 use meck::TextureAtlas;
-use meralus_shared::{Point2D, USize2D, Vector2D};
 use tracing::info;
 
 use crate::{LoadingError, LoadingResult};

@@ -2,12 +2,9 @@ use std::collections::hash_map::Entry;
 
 use ahash::{HashMap, HashMapExt};
 use etagere::{AllocId, AtlasAllocator};
-use horns::{
-    Blend, BlendingFactor, DrawParams, ElementType, Error, IndexBuffer, Program, RenderBackend, RenderInfo, RenderPass, Texture2d, TextureBuffer, VertexBuffer,
-    create_shader, impl_vertex,
-};
 use lyon_tessellation::{FillOptions, FillTessellator, VertexBuffers, geometry_builder::simple_builder};
-use meralus_shared::{AsValue, Color, ISize2D, Point2D, RRect, Rect, Size2D, Thickness, Transform3D, USize2D};
+use mavelin_engine::WindowContext;
+use mavelin_shared::{AsValue, Color, ISize2D, Point2D, RRect, Rect, Size2D, Thickness, Transform3D};
 use swash::{
     CacheKey, FontRef,
     scale::{Render, ScaleContext, Source, StrikeWith},
@@ -18,14 +15,23 @@ use swash::{
 
 use crate::render::RawRenderBuffer;
 
-create_shader!(ShapeShader => "./resources/shaders/shape");
-
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct CommonVertex {
-    pub position: Point2D, // screen-space position
-    pub local_uv: Point2D, // local coords (SDF) OR atlas UV (glyph)
-    pub shape_id: u32,     // index into TBO
+    pub position: Point2D,
+    pub local_uv: Point2D,
+    pub radii: Thickness,
+    pub half_size: [f32; 2],
+    pub color: [u8; 4],
+    pub mode: u32,
+}
+
+impl CommonVertex {
+    const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x2, 4 => Uint8x4, 5 => Uint32],
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -37,211 +43,6 @@ pub struct ShapeData {
     pub mode: u32,
     _pad: u32,
 }
-
-impl_vertex! {
-    CommonVertex {
-        position: [f32; 2],
-        local_uv: [f32; 2],
-        shape_id: [u32; 1]
-    }
-}
-
-// pub struct ShapeGeometryBuilder {
-//     buffers: RawRenderBuffer<CommonVertex, u32>,
-//     data_buffer: Vec<CommonVertexData>,
-//     first_vertex: u32,
-//     first_index: u32,
-//     vertex_offset: u32,
-//     color: Color,
-//     pub white_pixel_uv: Point2D,
-//     uv_rect: Option<(Point2D, Vector2D, Point2D, Size2D)>,
-// }
-
-// impl ShapeGeometryBuilder {
-//     pub const fn new(buffers: RawRenderBuffer<CommonVertex, u32>,
-// white_pixel_uv: Point2D, color: Color) -> Self {         let first_vertex =
-// buffers.vertices.len() as u32;         let first_index =
-// buffers.indices.len() as u32;
-
-//         Self {
-//             buffers,
-//             first_vertex,
-//             first_index,
-//             vertex_offset: 0,
-//             color,
-//             white_pixel_uv,
-//             uv_rect: None,
-//         }
-//     }
-
-//     pub const fn set_uv_rect(&mut self, uv_rect: (Point2D, Vector2D, Point2D,
-// Size2D)) {         self.uv_rect.replace(uv_rect);
-//     }
-
-//     pub const fn take_uv_rect(&mut self) {
-//         self.uv_rect.take();
-//     }
-
-//     pub const fn set_color(&mut self, color: Color) {
-//         self.color = color;
-//     }
-
-//     pub const fn set_vertex_offsset(&mut self, offset: u32) {
-//         self.vertex_offset = offset;
-//     }
-
-//     fn build(&mut self) -> RawRenderBuffer<CommonVertex, u32> {
-//         let (num_vertices, num_indices) = (self.buffers.vertices.len(),
-// self.buffers.indices.len());
-
-//         self.vertex_offset = 0;
-
-//         std::mem::replace(&mut self.buffers,
-// RawRenderBuffer::with_capacity(num_vertices, num_indices))     }
-// }
-
-// impl GeometryBuilder for ShapeGeometryBuilder {
-//     fn begin_geometry(&mut self) {
-//         self.first_vertex = self.buffers.vertices.len() as u32;
-//         self.first_index = self.buffers.indices.len() as u32;
-//     }
-
-//     fn add_triangle(&mut self, a: VertexId, b: VertexId, c: VertexId) {
-//         debug_assert_ne!(a, b);
-//         debug_assert_ne!(a, c);
-//         debug_assert_ne!(b, c);
-//         debug_assert!(a != VertexId::INVALID);
-//         debug_assert!(b != VertexId::INVALID);
-//         debug_assert!(c != VertexId::INVALID);
-
-//         self.buffers.indices.push((a + self.vertex_offset).into());
-//         self.buffers.indices.push((b + self.vertex_offset).into());
-//         self.buffers.indices.push((c + self.vertex_offset).into());
-//     }
-
-//     fn abort_geometry(&mut self) {
-//         self.buffers.vertices.truncate(self.first_vertex as usize);
-//         self.buffers.indices.truncate(self.first_index as usize);
-//     }
-// }
-
-// impl FillGeometryBuilder for ShapeGeometryBuilder {
-//     fn add_fill_vertex(&mut self, vertex: FillVertex) -> Result<VertexId,
-// GeometryBuilderError> {         let position =
-// Point2D::from_array(vertex.position().to_array());
-
-//         self.data_buffer.push(CommonVertexData {
-//             color: self.color.as_value(),
-//             half_size: (),
-//             radii: (),
-//             radii2: (),
-//             mode_pad: (),
-//         });
-//         self.buffers.vertices.push(CommonVertex {
-//             position,
-//             color: self.color.as_value(),
-//             uv: if let Some((offset, uv_size, origin, size)) = self.uv_rect {
-//                 Point2D::new(
-//                     uv_size.x.mul_add((position.x - origin.x) / size.x,
-// offset.x),                     uv_size.y.mul_add((position.y - origin.y) /
-// size.y, offset.y),                 )
-//             } else {
-//                 self.white_pixel_uv
-//             },
-//             clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
-//             _pad: [0; 8],
-//         });
-
-//         let len = self.buffers.vertices.len();
-
-//         if len > u32::MAX as usize {
-//             return Err(GeometryBuilderError::TooManyVertices);
-//         }
-
-//         Ok(VertexId((len - 1) as u32))
-//     }
-// }
-
-// impl StrokeGeometryBuilder for ShapeGeometryBuilder {
-//     fn add_stroke_vertex(&mut self, vertex: StrokeVertex) -> Result<VertexId,
-// GeometryBuilderError> {         self.buffers.vertices.push(CommonVertex {
-//             position:
-// Point3D::from_array(vertex.position().extend(0.0).to_array()),
-// color: self.color.as_value(),             uv: self.white_pixel_uv,
-//             clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
-//             _pad: [0; 8],
-//         });
-
-//         let len = self.buffers.vertices.len();
-
-//         if len > u32::MAX as usize {
-//             return Err(GeometryBuilderError::TooManyVertices);
-//         }
-
-//         Ok(VertexId((len - 1) as u32))
-//     }
-// }
-
-// pub struct CommonTessellator {
-//     pub builder: ShapeGeometryBuilder,
-//     tessellator: FillTessellator,
-//     options: FillOptions,
-// }
-
-// impl CommonTessellator {
-//     pub fn new(white_pixel_uv: Point2D) -> Self {
-//         let builder = ShapeGeometryBuilder::new(RawRenderBuffer::new(),
-// white_pixel_uv, Color::RED);         let tessellator =
-// FillTessellator::new();         let options = FillOptions::default();
-
-//         Self { builder, tessellator, options }
-//     }
-
-//     pub const fn set_uv_rect(&mut self, uv_rect: (Point2D, Vector2D, Point2D,
-// Size2D)) {         self.builder.set_uv_rect(uv_rect);
-//     }
-
-//     pub const fn take_uv_rect(&mut self) {
-//         self.builder.take_uv_rect();
-//     }
-
-//     const fn set_vertex_offsset(&mut self, offset: u32) {
-//         self.builder.set_vertex_offsset(offset);
-//     }
-
-//     #[allow(dead_code)]
-//     pub fn transformed_tessellate_with_color<F: FnOnce(&mut
-// NoAttributes<Transformed<FillBuilder, Transform>>)>(         &mut self,
-//         color: Color,
-//         transform: Transform,
-//         tessellate: F,
-//     ) -> Result<(), TessellationError> {
-//         self.builder.set_color(color);
-
-//         let mut builder = self.tessellator.builder(&self.options, &mut
-// self.builder).transformed(transform);
-
-//         tessellate(&mut builder);
-
-//         builder.build()
-//     }
-
-//     pub fn tessellate_with_color<F: FnOnce(&mut
-// NoAttributes<FillBuilder>)>(&mut self, color: Color, tessellate: F) ->
-// Result<(), TessellationError> {         self.builder.set_color(color);
-
-//         let mut builder = self.tessellator.builder(&self.options, &mut
-// self.builder);
-
-//         tessellate(&mut builder);
-
-//         builder.build()
-//     }
-
-//     pub fn build(&mut self) -> RawRenderBuffer<CommonVertex, u32> {
-//         self.builder.build()
-//     }
-// }
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -325,11 +126,12 @@ impl GlyphKey {
 
 #[allow(dead_code)]
 pub struct CommonRenderer {
-    shader: Program,
-    vbo: VertexBuffer<CommonVertex, ShapeShader>,
-    ibo: IndexBuffer<u32>,
-    tbo: TextureBuffer<ShapeData>,
-    texture: Texture2d,
+    render_pipeline: wgpu::RenderPipeline,
+    bind_group: wgpu::BindGroup,
+    vbo: wgpu::Buffer,
+    ibo: wgpu::Buffer,
+    matrix_buffer: wgpu::Buffer,
+    texture: wgpu::Texture,
     atlas: AtlasAllocator,
 
     // TEXT RENDERING
@@ -338,8 +140,7 @@ pub struct CommonRenderer {
     fonts: Vec<OwnedFont>,
 
     // COMMON RENDERING
-    pub(crate) buffers: RawRenderBuffer<CommonVertex, u32>,
-    shape_buffer: Vec<ShapeData>,
+    pub(crate) buffers: RawRenderBuffer<CommonVertex>,
 
     // VERTICES TRANSFORMATION
     transform: Option<Transform3D>,
@@ -358,24 +159,178 @@ pub struct OwnedFont {
 
 impl CommonRenderer {
     const PREALLOCATE_INDICES: usize = Self::PREALLOCATE_VERTICES * 2;
-    const PREALLOCATE_SHAPES: usize = 16 * 16 * 16;
     const PREALLOCATE_VERTICES: usize = 16 * 16 * 16 * 72;
 
-    pub fn new(backend: &RenderBackend) -> Result<Self, Error> {
+    #[allow(clippy::too_many_lines)]
+    pub fn new(context: &WindowContext) -> Self {
         let atlas = AtlasAllocator::new(euclid::Size2D::splat(4096));
-        let texture = backend.create_empty_texture2d(4096, 4096)?;
-        let shader = backend.create_program(&ShapeShader)?;
-        let vbo = backend.create_empty_vertex_buffer(Self::PREALLOCATE_VERTICES, &shader, true)?;
-        let ibo = backend.create_empty_index_buffer(ElementType::Triangles, Self::PREALLOCATE_INDICES, true)?;
-        let tbo = backend.create_empty_texture_buffer(Self::PREALLOCATE_SHAPES, true)?;
+        let texture = context.device.create_texture(&wgpu::TextureDescriptor {
+            size: wgpu::Extent3d {
+                width: 4096,
+                height: 4096,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            label: None,
+            view_formats: &[],
+        });
 
-        Ok(Self {
-            shader,
+        let vbo = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Common Render VBO"),
+            size: (Self::PREALLOCATE_VERTICES * size_of::<CommonVertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let ibo = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Common Render IBO"),
+            size: (Self::PREALLOCATE_INDICES * size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let matrix_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Common Render Matrix Buffer"),
+            size: size_of::<[f32; 16]>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Common Renderer Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../../../resources/shaders/shape.wgsl").into()),
+        });
+
+        let atlas_texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let texture_bind_group_layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+            label: Some("Common Renderer Bind Group Layout"),
+        });
+
+        let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: matrix_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&atlas_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+            label: Some("Common Renderer Bind Group"),
+        });
+
+        let render_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Common Renderer Pipeline Layout"),
+            bind_group_layouts: &[Some(&texture_bind_group_layout)],
+            immediate_size: 0,
+        });
+        //         color: (BlendingFactor::SourceAlpha,
+        // BlendingFactor::OneMinusSourceAlpha),         alpha:
+        // (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),     }),
+
+        let render_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Common Renderer Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Some(CommonVertex::LAYOUT)],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: *context.surface_format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..wgpu::PrimitiveState::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: mavelin_engine::Texture::DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: None,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        Self {
+            render_pipeline,
+            bind_group,
+            matrix_buffer,
             vbo,
             ibo,
-            tbo,
-
-            shape_buffer: Vec::new(),
 
             atlas,
             texture,
@@ -390,7 +345,7 @@ impl CommonRenderer {
             window_matrix: Transform3D::IDENTITY,
             matrix: None,
             clip: None,
-        })
+        }
     }
 
     #[allow(dead_code)]
@@ -412,8 +367,10 @@ impl CommonRenderer {
         self.matrix = None;
     }
 
-    pub const fn set_window_matrix(&mut self, matrix: Transform3D) {
+    pub fn set_window_matrix(&mut self, queue: &wgpu::Queue, matrix: Transform3D) {
         self.window_matrix = matrix;
+
+        queue.write_buffer(&self.matrix_buffer, 0, bytemuck::cast_slice(&matrix.to_cols_array()));
     }
 
     #[allow(dead_code)]
@@ -477,181 +434,16 @@ impl CommonRenderer {
         })
     }
 
-    // pub fn draw_round_image<P: AsRef<std::path::Path>>(
-    //     &mut self,
-    //     origin: Point2D,
-    //     size: Size2D,
-    //     corner_radius: Thickness,
-    //     path: P,
-    // ) -> Result<(), image::ImageError> {
-    //     let path = path.as_ref();
-    //     let key = AtlasKey::Image(path.to_path_buf());
-
-    //     let (offset, uv_size) = if let Some((offset, size, _)) =
-    // self.atlas.get_texture_uv(&key) {         (offset, size)
-    //     } else {
-    //         let image =
-    // image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
-    //         let image = image.to_rgba8();
-    //         let (_width, _height) = image.dimensions();
-
-    //         let (offset, size, _) = self.atlas.append(key, &image);
-
-    //         self.texture.writable().write(
-    //             (offset.x * 4096.0).convert().unwrap(),
-    //             (offset.y * 4096.0).convert().unwrap(),
-    //             (size.x * 4096.0).convert().unwrap(),
-    //             (size.y * 4096.0).convert().unwrap(),
-    //             image.as_raw(),
-    //         );
-
-    //         (offset, size)
-    //     };
-
-    //     self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
-    //     self.tessellator.set_uv_rect((offset, uv_size, origin, size));
-    //     self.tessellator
-    //         .tessellate_with_color(Color::WHITE, |builder| {
-    //             builder.add_rounded_rectangle(
-    //                 &bytemuck::cast(Rect::new(origin, size).to_box2d()),
-    //                 &BorderRadii {
-    //                     top_left: corner_radius.top_left(),
-    //                     top_right: corner_radius.top_right(),
-    //                     bottom_left: corner_radius.bottom_left(),
-    //                     bottom_right: corner_radius.bottom_right(),
-    //                 },
-    //                 Winding::Positive,
-    //             );
-    //         })
-    //         .unwrap();
-
-    //     self.tessellator.take_uv_rect();
-
-    //     let buffers = self.tessellator.build();
-
-    //     self.buffers.vertices.extend(buffers.vertices.into_iter().map(|mut
-    // vertex| {         vertex.position = self
-    //             .transform
-    //             .as_ref()
-    //             .map_or(vertex.position, |transform|
-    // transform.transform_point3(vertex.position));
-
-    //         vertex
-    //     }));
-
-    //     self.buffers.indices.extend(buffers.indices);
-
-    //     Ok(())
-    // }
-
-    // pub fn draw_image<P: AsRef<std::path::Path>>(&mut self, origin: Point2D,
-    // size: Size2D, path: P, object_fit: ObjectFit) -> Result<(),
-    // image::ImageError> {     let path = path.as_ref();
-    //     let key = AtlasKey::Image(path.to_path_buf());
-    //     let resulting_scale = size / 4096.0;
-
-    //     let (offset, uv_size) = if let Some((offset, scale, _)) =
-    // self.atlas.get_texture_uv(&key) {         match object_fit {
-    //             ObjectFit::Stretch => (offset, scale),
-    //             ObjectFit::Cover => {
-    //                 let r = Size2D::new(resulting_scale.x / scale.x,
-    // resulting_scale.y / scale.y);                 let ratio =
-    // r.max_element();                 let scale = scale * ratio;
-    //                 let mut diff = Point2D::ZERO;
-
-    //                 if scale.x > resulting_scale.x {
-    //                     diff.x = scale.x - resulting_scale.x;
-    //                 }
-
-    //                 if scale.y > resulting_scale.y {
-    //                     diff.y = scale.y - resulting_scale.y;
-    //                 }
-
-    //                 (offset + diff / 2.0 / ratio, resulting_scale / ratio)
-    //             }
-    //         }
-    //     } else {
-    //         let image =
-    // image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
-    //         let image = image.to_rgba8();
-
-    //         let (offset, size, _) = self.atlas.append(key, &image);
-
-    //         self.texture.writable().write(
-    //             (offset.x * 4096.0).convert().unwrap(),
-    //             (offset.y * 4096.0).convert().unwrap(),
-    //             (size.x * 4096.0).convert().unwrap(),
-    //             (size.y * 4096.0).convert().unwrap(),
-    //             image.as_raw(),
-    //         );
-
-    //         match object_fit {
-    //             ObjectFit::Stretch => (offset, size),
-    //             ObjectFit::Cover => {
-    //                 let r = resulting_scale / size;
-    //                 let ratio = r.max_element();
-    //                 let scaled_size = size * ratio;
-    //                 let mut diff = Point2D::ZERO;
-
-    //                 if scaled_size.x > resulting_scale.x {
-    //                     diff.x = scaled_size.x - resulting_scale.x;
-    //                 }
-
-    //                 if scaled_size.y > resulting_scale.y {
-    //                     diff.y = scaled_size.y - resulting_scale.y;
-    //                 }
-
-    //                 (offset + diff / 2.0 / ratio, resulting_scale / ratio)
-    //             }
-    //         }
-    //     };
-
-    //     self.buffers.vertices.extend(TEXT_BASE_VERTICES.map(|(position, uv)| {
-    //         let mut position = (origin + Point2D::new(position.x * size.x,
-    // position.y * size.y)).extend(position.z);
-
-    //         if let Some(transform) = &self.transform {
-    //             position = transform.transform_point3(position);
-    //         }
-
-    //         CommonVertex {
-    //             position,
-    //             color: Color::WHITE.as_value(),
-    //             uv: offset + Point2D::new(uv.x * uv_size.x, uv.y * uv_size.y),
-    //             clip: Vector4D::new(0.0, 0.0, 1.0, 1.0),
-    //             _pad: [0; 8],
-    //         }
-    //     }));
-
-    //     self.buffers
-    //         .indices
-    //         .extend([0, 1, 2, 3, 2, 1].map(|index| (self.buffers.vertices.len() -
-    // TEXT_BASE_VERTICES.len()) as u32 + index));
-
-    //     Ok(())
-    // }
-
-    fn push_shape(&mut self, color: Color, half_size: Size2D, radii: Thickness, mode: u32) -> u32 {
-        let id = self.shape_buffer.len() as u32;
-
-        self.shape_buffer.push(ShapeData {
-            color: color.as_value(),
-            half_size: half_size.to_array(),
-            radii,
-            mode,
-            _pad: 0,
-        });
-
-        id
-    }
-
-    fn push_quad(&mut self, positions: [Point2D; 4], local_uvs: [Point2D; 4], shape_id: u32) {
+    fn push_quad(&mut self, positions: [Point2D; 4], local_uvs: [Point2D; 4], half_size: Size2D, radii: Thickness, color: Color) {
         let base = self.buffers.vertices.len() as u32;
 
         self.buffers.vertices.extend((0..4).map(|i| CommonVertex {
             position: positions[i],
             local_uv: local_uvs[i],
-            shape_id,
+            color: [color.get_red(), color.get_green(), color.get_blue(), color.get_alpha()],
+            half_size: half_size.to_array(),
+            radii,
+            mode: 0,
         }));
 
         self.buffers.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -670,171 +462,14 @@ impl CommonRenderer {
         let h = size * 0.5;
         let c = origin + h;
 
-        let shape_id = self.push_shape(color, h, radii, 0);
-
         self.push_quad(
             [c - h, c + h.with_y(-h.y), c + h, c - h.with_y(-h.y)],
             [-h, h.with_y(-h.y), h, h.with_x(-h.x)],
-            shape_id,
+            h,
+            radii,
+            color,
         );
     }
-
-    // pub fn draw_image_path<P: AsRef<std::path::Path>>(&mut self, path: Path,
-    // image_path: P) -> Result<(), image::ImageError> {     let image_path =
-    // image_path.as_ref();     let key =
-    // AtlasKey::Image(image_path.to_path_buf());
-
-    //     let (offset, uv_size) = if let Some((offset, size, _)) =
-    // self.atlas.get_texture_uv(&key) {         (offset, size)
-    //     } else {
-    //         let image =
-    // image::ImageReader::open(image_path)?.with_guessed_format()?.decode()?;
-    //         let image = image.to_rgba8();
-    //         let (_width, _height) = image.dimensions();
-
-    //         let (offset, size, _) = self.atlas.append(key, &image);
-
-    //         self.texture.writable().write(
-    //             (offset.x * 4096.0).convert().unwrap(),
-    //             (offset.y * 4096.0).convert().unwrap(),
-    //             (size.x * 4096.0).convert().unwrap(),
-    //             (size.y * 4096.0).convert().unwrap(),
-    //             image.as_raw(),
-    //             // RawImage2d {
-    //             //     data: Cow::Owned(image.into_raw()),
-    //             //     width,
-    //             //     height,
-    //             //     format: ClientFormat::U8U8U8U8,
-    //             // },
-    //         );
-
-    //         (offset, size)
-    //     };
-
-    //     let [mut min, mut max] = [Point2D::ZERO; 2];
-
-    //     for op in &path.ops {
-    //         match op {
-    //             &Op::Circle { origin, radius } => {
-    //                 min = min.min(origin - radius / 2.0);
-    //                 max = max.min(origin + radius / 2.0);
-    //             }
-    //             Op::Rect(rect) => {
-    //                 min = min.min(rect.origin);
-    //                 max = max.max(rect.origin + rect.size);
-    //             }
-    //             Op::RoundRect(rrect) => {
-    //                 min = min.min(rrect.origin);
-    //                 max = max.max(rrect.origin + rrect.size);
-    //             }
-    //             &Op::Begin(at) => {
-    //                 min = min.min(at);
-    //                 max = max.max(at);
-    //             }
-    //             &Op::LineTo(to) => {
-    //                 min = min.min(to);
-    //                 max = max.max(to);
-    //             }
-    //             &Op::CubicBezierTo(ctrl1, ctrl2, to) => {
-    //                 min = min.min(ctrl1).min(ctrl2).min(to);
-    //                 max = max.max(ctrl1).max(ctrl2).max(to);
-    //             }
-    //             Op::Close => {}
-    //         }
-    //     }
-
-    //     let origin = min;
-    //     let size = max - min;
-
-    //     self.tessellator.set_vertex_offsset(self.buffers.vertices.len() as u32);
-    //     self.tessellator.set_uv_rect((offset, uv_size, origin, size));
-    //     self.tessellator
-    //         .tessellate_with_color(Color::WHITE, |builder| {
-    //             for op in path.ops {
-    //                 match op {
-    //                     Op::Circle { origin, radius } =>
-    // builder.add_circle(bytemuck::cast(origin), radius, Winding::Positive),
-    //                     Op::Rect(rect) =>
-    // builder.add_rectangle(&bytemuck::cast(rect.to_box2d()), Winding::Positive),
-    //                     Op::RoundRect(rrect) => builder.add_rounded_rectangle(
-    //                         &bytemuck::cast(rrect.as_box()),
-    //                         &BorderRadii {
-    //                             top_left: rrect.corner_radius.top_left(),
-    //                             top_right: rrect.corner_radius.top_right(),
-    //                             bottom_left: rrect.corner_radius.bottom_left(),
-    //                             bottom_right: rrect.corner_radius.bottom_right(),
-    //                         },
-    //                         Winding::Positive,
-    //                     ),
-    //                     Op::Begin(at) => {
-    //                         builder.begin(bytemuck::cast(at));
-    //                     }
-    //                     Op::LineTo(to) => {
-    //                         builder.line_to(bytemuck::cast(to));
-    //                     }
-    //                     Op::CubicBezierTo(ctrl1, ctrl2, to) => {
-    //                         builder.cubic_bezier_to(bytemuck::cast(ctrl1),
-    // bytemuck::cast(ctrl2), bytemuck::cast(to));                     }
-    //                     Op::Close => builder.close(),
-    //                 }
-    //             }
-    //         })
-    //         .unwrap();
-
-    //     self.tessellator.take_uv_rect();
-
-    //     let buffers = self.tessellator.build();
-
-    //     self.buffers.vertices.extend(buffers.vertices.into_iter().map(|mut
-    // vertex| {         vertex.position = self
-    //             .transform
-    //             .as_ref()
-    //             .map_or(vertex.position, |transform|
-    // transform.transform_point3(vertex.position));
-
-    //         vertex
-    //     }));
-
-    //     self.buffers.indices.extend(buffers.indices);
-    //     Ok(())
-    // }
-
-    // #[allow(dead_code)]
-    // pub fn draw_path(&mut self, path: Path, color: Color) -> Result<(),
-    // TessellationError> {     self.draw_shape(
-    //         |builder| {
-    //             for op in path.ops {
-    //                 match op {
-    //                     Op::Circle { origin, radius } =>
-    // builder.add_circle(bytemuck::cast(origin), radius, Winding::Positive),
-    //                     Op::Rect(rect) =>
-    // builder.add_rectangle(&bytemuck::cast(rect.to_box2d()), Winding::Positive),
-    //                     Op::RoundRect(rrect) => builder.add_rounded_rectangle(
-    //                         &bytemuck::cast(rrect.as_box()),
-    //                         &BorderRadii {
-    //                             top_left: rrect.corner_radius.top_left(),
-    //                             top_right: rrect.corner_radius.top_right(),
-    //                             bottom_left: rrect.corner_radius.bottom_left(),
-    //                             bottom_right: rrect.corner_radius.bottom_right(),
-    //                         },
-    //                         Winding::Positive,
-    //                     ),
-    //                     Op::Begin(at) => {
-    //                         builder.begin(bytemuck::cast(at));
-    //                     }
-    //                     Op::LineTo(to) => {
-    //                         builder.line_to(bytemuck::cast(to));
-    //                     }
-    //                     Op::CubicBezierTo(ctrl1, ctrl2, to) => {
-    //                         builder.cubic_bezier_to(bytemuck::cast(ctrl1),
-    // bytemuck::cast(ctrl2), bytemuck::cast(to));                     }
-    //                     Op::Close => builder.close(),
-    //                 }
-    //             }
-    //         },
-    //         color,
-    //     )
-    // }
 
     #[allow(dead_code)]
     pub fn push_lyon_path(&mut self, path: &lyon_tessellation::path::Path, color: Color) {
@@ -844,7 +479,6 @@ impl CommonRenderer {
             .tessellate_path(path, &FillOptions::default(), &mut simple_builder(&mut geom))
             .expect("tessellation failed");
 
-        let shape_id = self.push_shape(color, Size2D::ZERO, Thickness::default(), 2);
         let base = self.buffers.vertices.len() as u32;
 
         self.buffers
@@ -852,7 +486,10 @@ impl CommonRenderer {
             .extend(bytemuck::cast_vec(geom.vertices).into_iter().map(|position| CommonVertex {
                 position,
                 local_uv: Point2D::ZERO,
-                shape_id,
+                half_size: [0.0; 2],
+                radii: Thickness::default(),
+                color: [color.get_red(), color.get_green(), color.get_blue(), color.get_alpha()],
+                mode: 2,
             }));
 
         for i in geom.indices {
@@ -860,7 +497,17 @@ impl CommonRenderer {
         }
     }
 
-    pub fn draw_text<F: AsRef<str>, T: AsRef<str>>(&mut self, origin: Point2D, font: F, text: T, color: Color, font_size: f32, _max_width: Option<f32>) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text<F: AsRef<str>, T: AsRef<str>>(
+        &mut self,
+        queue: &wgpu::Queue,
+        origin: Point2D,
+        font: F,
+        text: T,
+        color: Color,
+        font_size: f32,
+        _max_width: Option<f32>,
+    ) {
         if let Some(font_index) = self.font_name_map.get(font.as_ref()).copied() {
             let text = text.as_ref();
 
@@ -913,27 +560,33 @@ impl CommonRenderer {
                                 let buffer = image::DynamicImage::ImageLuma8(buffer);
                                 let buffer = buffer.to_rgba8().into_raw();
 
-                                self.texture.writable().write(
-                                    alloc.rectangle.min.x.cast_unsigned(),
-                                    alloc.rectangle.min.y.cast_unsigned(),
-                                    image.placement.width,
-                                    image.placement.height,
+                                queue.write_texture(
+                                    wgpu::TexelCopyTextureInfoBase {
+                                        texture: &self.texture,
+                                        mip_level: 0,
+                                        origin: wgpu::Origin3d {
+                                            x: alloc.rectangle.min.x.cast_unsigned(),
+                                            y: alloc.rectangle.min.y.cast_unsigned(),
+                                            z: 0,
+                                        },
+                                        aspect: wgpu::TextureAspect::All,
+                                    },
                                     &buffer,
+                                    wgpu::TexelCopyBufferLayout {
+                                        offset: 0,
+                                        bytes_per_row: Some(4 * image.placement.width),
+                                        rows_per_image: Some(image.placement.height),
+                                    },
+                                    wgpu::Extent3d {
+                                        width: image.placement.width,
+                                        height: image.placement.height,
+                                        depth_or_array_layers: 1,
+                                    },
                                 );
 
                                 (alloc.rectangle, offset)
                             }
                         };
-
-                        let shape_id = self.shape_buffer.len() as u32;
-
-                        self.shape_buffer.push(ShapeData {
-                            color: color.as_value(),
-                            half_size: Size2D::ZERO.to_array(),
-                            radii: Thickness::default(),
-                            mode: 1,
-                            _pad: 0,
-                        });
 
                         let atlas_size = self.atlas.size();
                         let u0 = rect.min.x as f32 / atlas_size.width as f32;
@@ -952,7 +605,14 @@ impl CommonRenderer {
                             ]
                             .into_iter()
                             .zip([Point2D::new(u0, v0), Point2D::new(u1, v0), Point2D::new(u1, v1), Point2D::new(u0, v1)])
-                            .map(|(position, local_uv)| CommonVertex { position, local_uv, shape_id }),
+                            .map(|(position, local_uv)| CommonVertex {
+                                position,
+                                local_uv,
+                                color: color.as_value(),
+                                half_size: [0.0; 2],
+                                radii: Thickness::default(),
+                                mode: 1,
+                            }),
                         );
 
                         self.buffers.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -994,38 +654,45 @@ impl CommonRenderer {
     //     Ok(RenderInfo { draw_calls: 1, vertices })
     // }
 
-    pub fn render(&mut self, pass: &mut RenderPass, _backend: &RenderBackend, matrix: Option<Transform3D>, size: USize2D) -> RenderInfo {
-        let matrix = matrix.or(self.matrix).unwrap_or(self.window_matrix);
+    pub fn render(
+        &mut self,
+        render_pass: &mut wgpu::RenderPass,
+        context: &WindowContext,
+        // matrix: Option<Transform3D>,
+        // size: USize2D,
+    ) -> super::RenderInfo {
+        // let matrix = matrix.or(self.matrix).unwrap_or(self.window_matrix);
 
         let vertices = self.buffers.vertices.len();
-        let count = self.buffers.indices.len();
+        let indices = self.buffers.indices.len();
 
-        self.vbo.dynamic_write(&self.buffers.vertices);
-        self.ibo.dynamic_write(&self.buffers.indices);
-        self.tbo.dynamic_write(&self.shape_buffer);
+        context.queue.write_buffer(&self.vbo, 0, bytemuck::cast_slice(&self.buffers.vertices));
+        context.queue.write_buffer(&self.ibo, 0, bytemuck::cast_slice(&self.buffers.indices));
 
         self.buffers.clear();
-        self.shape_buffer.clear();
 
-        self.shader
-            .bind()
-            .with_uniform("atlas", &self.texture)
-            .with_uniform("shape_data", &self.tbo)
-            .with_uniform("resolution", size.as_vec2().to_array())
-            .with_uniform("matrix", matrix);
+        // self.shader
+        //     .bind()
+        //     .with_uniform("atlas", &self.texture)
+        //     .with_uniform("shape_data", &self.tbo)
+        //     .with_uniform("resolution", size.as_vec2().to_array())
+        //     .with_uniform("matrix", matrix);
 
-        pass.apply_params(DrawParams {
-            blend: Some(Blend {
-                color: (BlendingFactor::SourceAlpha, BlendingFactor::OneMinusSourceAlpha),
-                alpha: (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),
-            }),
-            depth: None,
-            culling: None,
-        });
+        // pass.apply_params(DrawParams {
+        //     blend: Some(Blend {
+        //         color: (BlendingFactor::SourceAlpha,
+        // BlendingFactor::OneMinusSourceAlpha),         alpha:
+        // (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),     }),
+        //     depth: None,
+        //     culling: None,
+        // });
 
-        pass.draw_elements_slice(&self.vbo, &self.ibo, count, 0);
-        pass.reset_params();
+        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.set_bind_group(0, &self.bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.vbo.slice(..));
+        render_pass.set_index_buffer(self.ibo.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..indices as u32, 0, 0..1);
 
-        RenderInfo { draw_calls: 1, vertices }
+        super::RenderInfo { draw_calls: 1, vertices }
     }
 }

@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf, absolute},
 };
 
-use meralus_storage::ResourceStorage;
+use mavelin_storage::ResourceStorage;
 use mollie::{
     AdtBuilder, GcPtr, VTableBuilder,
     compiler::{Compiler, cranelift::module::ModuleResult, error::CompileError},
@@ -95,7 +95,7 @@ impl Addon {
 
 struct DataContext<'a> {
     current_mapping: &'a str,
-    storage: &'a mut meralus_storage::ResourceStorage,
+    storage: &'a mut mavelin_storage::ResourceStorage,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -111,7 +111,7 @@ struct BlockData {
     selectable: bool,
 }
 
-impl meralus_storage::Block for BlockData {
+impl mavelin_storage::Block for BlockData {
     fn id(&self) -> &'static str {
         self.id
     }

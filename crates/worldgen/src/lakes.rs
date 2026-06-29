@@ -1,5 +1,5 @@
-use meralus_shared::{IPoint3D, Random};
-use meralus_world::{ChunkAccess, SubChunkBlockState};
+use mavelin_shared::{IPoint3D, Random};
+use mavelin_world::{ChunkAccess, SubChunkBlockState};
 
 pub struct LakesGenerator {
     pub(crate) air: u32,

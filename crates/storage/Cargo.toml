@@ -1,19 +1,19 @@
 [package]
-name = "meralus-storage"
+name = "mavelin-storage"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 ahash.workspace = true
-meralus-physics.workspace = true
-meralus-shared = { workspace = true, features = [
+mavelin-physics.workspace = true
+mavelin-shared = { workspace = true, features = [
     "geometry",
     "color",
     "face",
     "serde",
 ] }
-meralus-io.workspace = true
-meralus-world.workspace = true
+mavelin-io.workspace = true
+mavelin-world.workspace = true
 meck.workspace = true
 image = { workspace = true, features = ["png"] }
 tracing = "0.1.44"

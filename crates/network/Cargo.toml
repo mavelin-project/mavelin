@@ -1,5 +1,5 @@
 [package]
-name = "meralus-network"
+name = "mavelin-network"
 version = "0.1.0"
 edition = "2024"
 
@@ -11,7 +11,7 @@ bson = "2.15.0"
 futures = { version = "0.3.32", features = ["std"] }
 uuid = { version = "1.21.0", features = ["v4"] }
 serde.workspace = true
-meralus-shared = { workspace = true, features = ["geometry"] }
+mavelin-shared = { workspace = true, features = ["geometry"] }
 
 [lints]
 workspace = true

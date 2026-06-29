@@ -1,0 +1,7 @@
+base_water_color = "#66a1ff"
+base_foliage_color = "#46c546"
+base_sky_color = "#96a6c6"
+
+[biomes.desert]
+sky_color = "#dccc91"
+fog_color = "#dccc91"

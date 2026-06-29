@@ -1,4 +1,4 @@
-use meralus_shared::{Point3D, Size3D, Vector3D};
+use mavelin_shared::{Point3D, Size3D, Vector3D};
 
 use crate::Aabb;
 

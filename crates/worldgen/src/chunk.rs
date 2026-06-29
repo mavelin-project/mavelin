@@ -1,5 +1,5 @@
-use meralus_shared::{DPoint3D, IPoint2D, IPoint3D, Random, USizePoint2D, USizePoint3D};
-use meralus_world::{BiomeBase, BlockSource, CHUNK_HEIGHT_I32, Chunk, ChunkAccess, SUBCHUNK_SIZE_I32, SubChunkBlockState};
+use mavelin_shared::{DPoint3D, IPoint2D, IPoint3D, Random, USizePoint2D, USizePoint3D};
+use mavelin_world::{Biome, BlockSource, CHUNK_HEIGHT_I32, Chunk, ChunkAccess, SUBCHUNK_SIZE_I32, SubChunkBlockState};
 
 use super::{BiomeGenerator, BiomeNoise, LakesGenerator, noise};
 use crate::{
@@ -412,9 +412,9 @@ impl ChunkGenerator {
         }
 
         tree_count += match biomebase {
-            BiomeBase::SeasonalForest => k1 + 2,
-            BiomeBase::Rainforest | BiomeBase::Forest | BiomeBase::Taiga => k1 + 5,
-            BiomeBase::Desert | BiomeBase::Plains | BiomeBase::Tundra => -20,
+            Biome::SeasonalForest => k1 + 2,
+            Biome::Rainforest | Biome::Forest | Biome::Taiga => k1 + 5,
+            Biome::Desert | Biome::Plains | Biome::Tundra => -20,
             _ => 0,
         };
 
@@ -431,7 +431,7 @@ impl ChunkGenerator {
                 }
             }
 
-            if matches!(biomebase, BiomeBase::Forest) {
+            if matches!(biomebase, Biome::Forest) {
                 if random.next_i32(3) == 0 {
                     ForestGenerator {
                         air,

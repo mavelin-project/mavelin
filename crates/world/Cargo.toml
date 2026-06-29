@@ -1,12 +1,12 @@
 [package]
-name = "meralus-world"
+name = "mavelin-world"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 ahash.workspace = true
 lasso.workspace = true
-meralus-shared = { workspace = true, features = ["face"] }
+mavelin-shared = { workspace = true, features = ["face"] }
 serde = { workspace = true, optional = true }
 
 [features]

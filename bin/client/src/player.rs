@@ -1,9 +1,9 @@
 use std::f32;
 
 use ahash::HashMap;
-use meralus_engine::KeyCode;
-use meralus_physics::{Aabb, PhysicsBody};
-use meralus_shared::{DSize3D, Lerp, Point3D, Vector2D};
+use mavelin_engine::KeyCode;
+use mavelin_physics::{Aabb, PhysicsBody};
+use mavelin_shared::{DSize3D, Lerp, Point3D, Vector2D};
 
 use crate::{Camera, get_movement_direction, get_rotation_directions, input::Input};
 

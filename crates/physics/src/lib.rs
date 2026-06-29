@@ -3,7 +3,7 @@ mod body;
 mod context;
 mod raycast;
 
-use meralus_shared::{IPoint3D, Point3D};
+use mavelin_shared::{IPoint3D, Point3D};
 
 pub use self::{
     aabb::Aabb,

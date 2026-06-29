@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use ahash::HashMap;
-use meralus_io::{BlockFace, Faces, JsonError, TexturePath, TextureRef};
-use meralus_physics::Aabb;
-use meralus_shared::{Axis, DPoint3D, Face, IPoint3D, Point2D, Point3D, Transform3D, Vector2D, Vector3D};
+use mavelin_io::{BlockFace, Faces, JsonError, TexturePath, TextureRef};
+use mavelin_physics::Aabb;
+use mavelin_shared::{Axis, DPoint3D, Face, IPoint3D, Point2D, Point3D, Transform3D, Vector2D, Vector3D};
 
 use crate::{LoadingError, LoadingResult, Mappings, block::BlockStorage, texture::TextureStorage};
 

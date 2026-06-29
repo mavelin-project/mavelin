@@ -43,6 +43,7 @@ impl Clock {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub const fn get_visual_progress(&self) -> (bool, f32) {
         let progress = self.get_progress();
         let visual_progress = if progress > 0.5 { progress - 0.5 } else { progress };

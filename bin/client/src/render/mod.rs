@@ -1,11 +1,39 @@
 use core::fmt;
 
-use horns::{ElementType, Error, GlPrimitive, IndexBuffer, Program, RenderBackend, Shader, Vertex, VertexBuffer};
-use meralus_shared::IPoint2D;
+use mavelin_shared::IPoint2D;
+use wgpu::util::DeviceExt;
 
 pub mod chunk;
 pub mod common;
 pub mod context;
+
+#[derive(Debug, Clone, Copy)]
+pub struct RenderInfo {
+    pub draw_calls: usize,
+    pub vertices: usize,
+}
+
+impl RenderInfo {
+    #[inline]
+    pub const fn default() -> Self {
+        Self { draw_calls: 0, vertices: 0 }
+    }
+
+    #[inline]
+    pub const fn extend(&mut self, other: &Self) {
+        self.draw_calls += other.draw_calls;
+        self.vertices += other.vertices;
+    }
+
+    #[must_use]
+    #[inline]
+    pub const fn take(&mut self) -> Self {
+        Self {
+            draw_calls: std::mem::replace(&mut self.draw_calls, 0),
+            vertices: std::mem::replace(&mut self.vertices, 0),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -152,36 +180,47 @@ impl RenderShape {
     }
 }
 
-pub struct RenderBuffer<V: Vertex, S: Shader, I: GlPrimitive> {
-    pub vertices: VertexBuffer<V, S>,
-    pub indices: IndexBuffer<I>,
+pub struct RenderBuffer {
+    pub vertices: wgpu::Buffer,
+    pub indices: wgpu::Buffer,
+    pub count: usize,
 }
 
-impl<V: Vertex, S: Shader, I: GlPrimitive> RenderBuffer<V, S, I> {
+impl RenderBuffer {
     #[inline]
-    pub fn new(backend: &RenderBackend, vertices: &[V], shader: &Program, element_type: ElementType, indices: &[I]) -> Result<Self, Error> {
-        Ok(Self {
-            vertices: backend.create_vertex_buffer(vertices, shader, false)?,
-            indices: backend.create_index_buffer(element_type, indices, false)?,
-        })
+    pub fn new<V: bytemuck::NoUninit>(device: &wgpu::Device, vertices: &[V], indices: &[u32]) -> Self {
+        Self {
+            vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Render Buffer: Vertices"),
+                contents: bytemuck::cast_slice(vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Render Buffer: Indices"),
+                contents: bytemuck::cast_slice(indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            }),
+            count: indices.len(),
+        }
     }
 
-    #[inline]
-    pub fn new_dynamic(backend: &RenderBackend, vertices: &[V], shader: &Program, element_type: ElementType, indices: &[I]) -> Result<Self, Error> {
-        Ok(Self {
-            vertices: backend.create_vertex_buffer(vertices, shader, true)?,
-            indices: backend.create_index_buffer(element_type, indices, true)?,
-        })
-    }
+    // #[inline]
+    // pub fn new_dynamic(backend: &RenderBackend, vertices: &[V], shader: &Program,
+    // element_type: ElementType, indices: &[I]) -> Result<Self, Error> {
+    //     Ok(Self {
+    //         vertices: backend.create_vertex_buffer(vertices, shader, true)?,
+    //         indices: backend.create_index_buffer(element_type, indices, true)?,
+    //     })
+    // }
 }
 
-pub struct RawRenderBuffer<V: Vertex, I: GlPrimitive> {
+pub struct RawRenderBuffer<V: bytemuck::NoUninit> {
     pub vertices: Vec<V>,
-    pub indices: Vec<I>,
+    pub indices: Vec<u32>,
 }
 
 #[allow(dead_code)]
-impl<V: Vertex, I: GlPrimitive> RawRenderBuffer<V, I> {
+impl<V: bytemuck::NoUninit> RawRenderBuffer<V> {
     #[inline]
     pub const fn new() -> Self {
         Self {
@@ -205,7 +244,7 @@ impl<V: Vertex, I: GlPrimitive> RawRenderBuffer<V, I> {
     }
 }
 
-impl<V: Vertex, I: GlPrimitive> Default for RawRenderBuffer<V, I> {
+impl<V: bytemuck::NoUninit> Default for RawRenderBuffer<V> {
     #[inline]
     fn default() -> Self {
         Self::new()

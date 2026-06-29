@@ -1,7 +1,6 @@
 use std::{mem::replace, sync::mpsc};
 
-use horns::Texture2d;
-use meralus_storage::ResourceStorage;
+use mavelin_storage::ResourceStorage;
 
 pub enum ProgressChange {
     SetInitialInfo(ProgressInfo),
@@ -49,7 +48,7 @@ impl Progress {
         }
     }
 
-    pub fn update(&mut self, texture: &Texture2d, lightmap: &Texture2d, resource_manager: &ResourceStorage) {
+    pub fn update(&mut self, queue: &wgpu::Queue, texture: &wgpu::Texture, lightmap: &wgpu::Texture, resource_manager: &ResourceStorage) {
         if let Ok(info) = self.receiver.try_recv() {
             match info {
                 ProgressChange::SetInitialInfo(info) => {
@@ -102,15 +101,47 @@ impl Progress {
 
                     if !visible {
                         for (mipmap, image) in resource_manager.get_mipmaps().iter().enumerate() {
-                            let texture = texture.writable_mipmap(mipmap);
-
-                            texture.write(0, 0, image.width(), image.height(), image.as_raw());
+                            queue.write_texture(
+                                wgpu::TexelCopyTextureInfoBase {
+                                    texture,
+                                    mip_level: mipmap as u32,
+                                    origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                image.as_raw(),
+                                wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(4 * image.width()),
+                                    rows_per_image: Some(image.height()),
+                                },
+                                wgpu::Extent3d {
+                                    width: image.width(),
+                                    height: image.height(),
+                                    depth_or_array_layers: 1,
+                                },
+                            );
                         }
 
                         for (mipmap, image) in resource_manager.get_lightmap_mipmaps().iter().enumerate() {
-                            let lightmap = lightmap.writable_mipmap(mipmap);
-
-                            lightmap.write(0, 0, image.width(), image.height(), image.as_raw());
+                            queue.write_texture(
+                                wgpu::TexelCopyTextureInfoBase {
+                                    texture: lightmap,
+                                    mip_level: mipmap as u32,
+                                    origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                image.as_raw(),
+                                wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(4 * image.width()),
+                                    rows_per_image: Some(image.height()),
+                                },
+                                wgpu::Extent3d {
+                                    width: image.width(),
+                                    height: image.height(),
+                                    depth_or_array_layers: 1,
+                                },
+                            );
                         }
                     }
                 }

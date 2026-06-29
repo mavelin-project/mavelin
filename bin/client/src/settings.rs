@@ -1,11 +1,13 @@
 use std::{collections::VecDeque, time::Duration};
 
-use horns::RenderInfo;
-use meralus_shared::IPoint3D;
-use meralus_storage::ResourceStorage;
-use meralus_world::{Chunk, ChunkAccess};
+use mavelin_shared::IPoint3D;
+use mavelin_storage::ResourceStorage;
+use mavelin_world::{Chunk, ChunkAccess};
 
-use crate::{render::RenderShape, util::vertex_ao};
+use crate::{
+    render::{RenderInfo, RenderShape},
+    util::vertex_ao,
+};
 
 #[derive(Debug, Clone)]
 pub struct Debugging {

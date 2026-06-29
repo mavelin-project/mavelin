@@ -1,7 +1,9 @@
 use crate::chunk::SubChunkBlockState;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BiomeBase {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
+pub enum Biome {
     Rainforest,
     Swampland,
     SeasonalForest,
@@ -17,7 +19,7 @@ pub enum BiomeBase {
     Sky,
 }
 
-impl BiomeBase {
+impl Biome {
     const LOOKUP: [Self; 64 * 64] = const {
         let mut table = [const { Self::Sky }; 64 * 64];
         let mut i = 0;

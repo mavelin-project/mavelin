@@ -1,5 +1,6 @@
 mod block_model;
 mod block_states;
+mod configs;
 mod entity_model;
 
 use core::fmt;
@@ -14,6 +15,7 @@ pub use self::{
         BlockState, BlockStateValidationError, BlockStates, BlockStatesValidationError, NumericProperty, Property, PropertyRegistry, PropertyType,
         PropertyValue,
     },
+    configs::{BiomeColorConfig, ColorConfig},
     entity_model::{EntityElement, EntityElementData, EntityElementFace, EntityModel, EntityTexture},
 };
 

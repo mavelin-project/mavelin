@@ -2,7 +2,7 @@ mod curves;
 
 use std::time::Duration;
 
-use meralus_shared::Lerp;
+use mavelin_shared::Lerp;
 
 pub use self::curves::{Curve, ICurve};
 
