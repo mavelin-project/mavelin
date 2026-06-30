@@ -238,6 +238,7 @@ impl ChunkAccess for LocalChunkManager {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ChunkStage {
     Unloaded,
+    GenerationInProgress,
     Bare,
     PopulationInProgress,
     Populated,

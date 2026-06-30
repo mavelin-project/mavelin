@@ -31,7 +31,7 @@ use cpal::traits::HostTrait;
 use kira::{AudioManager, AudioManagerSettings, backend::cpal::CpalBackendSettings};
 use mavelin_engine::{Application, CursorGrabMode, KeyCode, KeyboardModifiers, MouseButton, State, WindowContext};
 use mavelin_physics::PhysicsContext;
-use mavelin_shared::{Color, Point2D, Point3D, Transform3D, USize2D, Vector2D};
+use mavelin_shared::{Color, Point2D, Point3D, USize2D, Vector2D, camera::proj};
 use mavelin_storage::{Block, ResourceStorage, TextureStorage};
 use mavelin_tween::{Animation, Tween};
 use mavelin_world::{BlockSource, ChunkManager};
@@ -246,7 +246,7 @@ impl State for GameLoop {
 
         common_renderer.add_font("default", include_bytes!("../../../resources/fonts/Monocraft.ttf"));
         common_renderer.add_font("default_bold", include_bytes!("../../../resources/fonts/Monocraft-Bold.ttf"));
-        common_renderer.set_window_matrix(context.queue, Transform3D::orthographic_rh(0.0, size.x, size.y, 0.0, -100.0, 100.0));
+        common_renderer.set_window_matrix(context.queue, proj::directx::orthographic(0.0, size.x, size.y, 0.0, -100.0, 100.0));
 
         // let sounds = fs::read_dir("./resources/sounds")
         //     .unwrap()
@@ -331,7 +331,7 @@ impl State for GameLoop {
         let size = size.as_vec2();
 
         self.common_renderer
-            .set_window_matrix(context.queue, Transform3D::orthographic_rh(0.0, size.x, size.y, 0.0, -1000.0, 1000.0));
+            .set_window_matrix(context.queue, proj::directx::orthographic(0.0, size.x, size.y, 0.0, -1000.0, 1000.0));
 
         if let Some(world) = &mut self.world {
             world.camera.aspect_ratio = size.x / size.y;

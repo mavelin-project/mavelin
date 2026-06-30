@@ -175,6 +175,14 @@ impl RenderShape {
         }
     }
 
+    pub const fn enlarge(self, amount: u16) -> Self {
+        match self {
+            Self::Circle(r) => Self::Circle(r + amount),
+            Self::Rect(w, h) => Self::Rect(w + amount, h + amount),
+            Self::Square(s) => Self::Square(s + amount),
+        }
+    }
+
     pub const fn iter_from_center(self, center: IPoint2D) -> RenderShapeIter {
         RenderShapeIter::new(center, self)
     }

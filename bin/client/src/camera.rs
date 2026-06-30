@@ -1,5 +1,5 @@
 use mavelin_physics::{AabbSource, PhysicsContext, RayCastResult};
-use mavelin_shared::{FrustumCulling, Point3D, Transform3D, Vector3D};
+use mavelin_shared::{FrustumCulling, Point3D, Transform3D, Vector3D, camera};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
@@ -86,17 +86,17 @@ impl Camera {
 
     #[inline]
     pub fn projection(&self) -> Transform3D {
-        Transform3D::perspective_rh(self.fov, self.aspect_ratio, self.z_near, self.z_far)
+        camera::proj::directx::perspective(self.fov, self.aspect_ratio, self.z_near, self.z_far)
     }
 
     #[inline]
     pub fn view(&self) -> Transform3D {
-        Transform3D::look_at_rh(Point3D::ZERO, self.front, self.up)
+        camera::view::look_at_mat4(Point3D::ZERO, self.front, self.up)
     }
 
     #[inline]
     pub fn world_view(&self) -> Transform3D {
-        Transform3D::look_at_rh(self.position, self.target(), self.up)
+        camera::view::look_at_mat4(self.position, self.target(), self.up)
     }
 
     #[inline]

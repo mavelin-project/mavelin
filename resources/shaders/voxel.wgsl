@@ -308,8 +308,8 @@ fn vs_main(
     let pos = vec3<f32>(voxel_imm.chunk) - voxel.camera_pos + in.position;
 
     out.position = voxel_imm.matrix * vec4(pos, 1.0);
-    out.spherical_dist = fog_spherical_distance(pos);
-    out.cylindrical_dist = fog_cylindrical_distance(pos);
+    out.spherical_dist = fog_spherical_distance(out.position.xyz);
+    out.cylindrical_dist = fog_cylindrical_distance(out.position.xyz);
     out.color = linear_color;
     out.light_intensity = light_intensity;
     out.uv = in.uv;
@@ -366,13 +366,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_color = vec4<f32>(linear_rgb, sampled_raw.a);
     var f_color = sampled_raw * vec4(in.color.rgb * light_intensity, in.color.a);
 
-    // if fog.with_fog == 1 {
-    //     f_color = apply_fog(
-    //         f_color,
-    //         in.spherical_dist,
-    //         in.cylindrical_dist,
-    //     );
-    // }
+    if fog.with_fog == 1 {
+        f_color = apply_fog(
+            f_color,
+            in.spherical_dist,
+            in.cylindrical_dist,
+        );
+    }
 
     return f_color;
 

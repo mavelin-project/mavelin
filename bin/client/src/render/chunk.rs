@@ -2,8 +2,9 @@ use std::{borrow::Borrow, hash::Hash};
 
 use indexmap::IndexMap;
 use mavelin_engine::WindowContext;
-use mavelin_shared::{AsValue, Color, Frustum, IPoint2D, IPoint3D, Point2D, Point3D, Transform3D};
+use mavelin_shared::{AsValue, Color, Cube3D, Face, Frustum, IPoint2D, IPoint3D, Point2D, Point3D, Transform3D};
 use mavelin_world::{SUBCHUNK_SIZE, SUBCHUNK_SIZE_F32, SUBCHUNK_SIZE_I32};
+use wgpu::util::DeviceExt;
 
 use super::RenderBuffer;
 use crate::render::{RenderInfo, RenderShape};
@@ -31,6 +32,23 @@ impl VoxelVertex {
         array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Uint8x4, 3 => Uint32],
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct CloudVertex {
+    pub position: Point3D,
+    pub half_size: Point3D,
+    pub color: [u8; 4],
+    // pub _pad: u32
+}
+
+impl CloudVertex {
+    const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Uint8x4],
     };
 }
 
@@ -199,14 +217,20 @@ impl VoxelMeshBuilder {
 pub struct ChunkRenderer {
     solid_render_pipeline: wgpu::RenderPipeline,
     translucent_render_pipeline: wgpu::RenderPipeline,
-    voxel_bind_group: wgpu::BindGroup,
-    fragment_bind_group: wgpu::BindGroup,
+    cloud_render_pipeline: wgpu::RenderPipeline,
     fog_bind_group: wgpu::BindGroup,
 
+    voxel_bind_group: wgpu::BindGroup,
     voxel: VoxelUniform,
     voxel_buffer: wgpu::Buffer,
+
+    fragment_bind_group: wgpu::BindGroup,
     fog: FogUniform,
     fog_buffer: wgpu::Buffer,
+
+    cloud_buffer: wgpu::Buffer,
+    cloud_indices_buffer: wgpu::Buffer,
+    cloud_indices_count: usize,
 
     subchunks: IndexMap<(IPoint2D, usize), RenderSubchunk>,
     last_position: IPoint3D,
@@ -238,16 +262,32 @@ struct VoxelUniform {
 struct VoxelImmediates {
     matrix: Transform3D,
     chunk: IPoint3D,
-    _pad: [u32; 1],
+    _pad: u32,
+}
+
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct CloudImmediates {
+    matrix: Transform3D,
+    radii: f32,
+    _pad: [u32; 3],
 }
 
 impl ChunkRenderer {
     #[inline]
     #[allow(clippy::too_many_lines)]
     pub fn new(context: &WindowContext, texture: &wgpu::Texture, lightmap: &wgpu::Texture) -> Self {
+        let voxel = std::fs::read_to_string("./resources/shaders/voxel.wgsl").unwrap();
+        let clouds = std::fs::read_to_string("./resources/shaders/clouds.wgsl").unwrap();
+
         let shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Chunk Renderer Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../../../resources/shaders/voxel.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(voxel.into()),
+        });
+
+        let cloud_shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Chunk Renderer Shader"),
+            source: wgpu::ShaderSource::Wgsl(clouds.into()),
         });
 
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -273,6 +313,20 @@ impl ChunkRenderer {
             label: Some("Fog Buffer"),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             size: size_of::<FogUniform>() as u64,
+            mapped_at_creation: false,
+        });
+
+        let cloud_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Cloud Buffer: Vertices"),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            size: (size_of::<CloudVertex>() * 6 * 128) as u64,
+            mapped_at_creation: false,
+        });
+
+        let cloud_indices_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Cloud Buffer: Indices"),
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            size: (size_of::<u32>() * 6 * 128) as u64,
             mapped_at_creation: false,
         });
 
@@ -379,6 +433,12 @@ impl ChunkRenderer {
             immediate_size: size_of::<VoxelImmediates>() as u32,
         });
 
+        let cloud_render_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Cloud Renderer Pipeline Layout"),
+            bind_group_layouts: &[],
+            immediate_size: size_of::<CloudImmediates>() as u32,
+        });
+
         let solid_render_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Chunk Renderer Solid Pipeline"),
             layout: Some(&render_pipeline_layout),
@@ -467,7 +527,7 @@ impl ChunkRenderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: mavelin_engine::Texture::DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
+                depth_write_enabled: Some(true),
                 depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
@@ -476,20 +536,60 @@ impl ChunkRenderer {
             multiview_mask: None,
             cache: None,
         });
-        // pass.apply_params(DrawParams {
-        //     blend: Some(Blend {
-        //         color: (BlendingFactor::SourceAlpha,
-        // BlendingFactor::OneMinusSourceAlpha),         alpha:
-        // (BlendingFactor::One, BlendingFactor::OneMinusSourceAlpha),     }),
-        //     depth: Some(Depth {
-        //         test: DepthTest::IfLessOrEqual,
-        //         write: true,
-        //     }),
-        //     culling: Some(BackfaceCullingMode::CullCounterClockwise),
-        // });
+
+        let cloud_render_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Cloud Renderer Pipeline"),
+            layout: Some(&cloud_render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &cloud_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Some(CloudVertex::LAYOUT)],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &cloud_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: *context.surface_format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: Some(wgpu::Face::Back),
+                ..wgpu::PrimitiveState::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: mavelin_engine::Texture::DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         Self {
             solid_render_pipeline,
             translucent_render_pipeline,
+            cloud_render_pipeline,
             voxel_bind_group,
             fragment_bind_group,
             fog_bind_group,
@@ -509,10 +609,55 @@ impl ChunkRenderer {
                 _pad: [0; 3],
             },
             fog_buffer,
+            cloud_buffer,
+            cloud_indices_buffer,
+            cloud_indices_count: 0,
             subchunks: IndexMap::new(),
             last_position: IPoint3D::ZERO,
             sun_position: 0.0,
             fog_color: Color::BLACK,
+        }
+    }
+
+    pub fn set_clouds(&mut self, queue: &wgpu::Queue, device: &wgpu::Device, clouds: impl Iterator<Item = (Cube3D, Color)>) {
+        let mut vertices = Vec::with_capacity(self.cloud_indices_count / 6);
+        let mut indices = Vec::with_capacity(self.cloud_indices_count);
+        let mut current_offset = 0;
+
+        for (Cube3D { origin, size }, color) in clouds {
+            for face in Face::ALL {
+                let face_vertices = face.as_vertices();
+
+                vertices.extend((0..4).map(|i| CloudVertex {
+                    position: origin + face_vertices[i] * size,
+                    half_size: size / 2.0,
+                    color: color.as_value(),
+                }));
+
+                let offset = current_offset;
+
+                current_offset += 4;
+                indices.extend([offset, offset + 1, offset + 2, offset + 3, offset + 2, offset + 1]);
+            }
+        }
+
+        if indices.len() > self.cloud_indices_count {
+            self.cloud_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Cloud Buffer: Vertices"),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                contents: bytemuck::cast_slice(&vertices),
+            });
+
+            self.cloud_indices_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Cloud Buffer: Indices"),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                contents: bytemuck::cast_slice(&indices),
+            });
+
+            self.cloud_indices_count = indices.len();
+        } else {
+            queue.write_buffer(&self.cloud_buffer, 0, bytemuck::cast_slice(&vertices));
+            queue.write_buffer(&self.cloud_indices_buffer, 0, bytemuck::cast_slice(&indices));
         }
     }
 
@@ -532,9 +677,9 @@ impl ChunkRenderer {
     }
 
     #[inline]
-    pub fn set_fog_color(&mut self, value: Color) {
+    pub const fn set_fog_color(&mut self, value: Color) {
         self.fog_color = value;
-        self.fog.fog_color = value.as_value();
+        self.fog.fog_color = value.to_linear_rgba();
     }
 
     #[inline]
@@ -561,18 +706,6 @@ impl ChunkRenderer {
     {
         self.subchunks.contains_key(k)
     }
-
-    // #[inline]
-    // fn bind_shader(&self, matrix: Transform3D, atlas: SampledTexture2d, lightmap:
-    // SampledTexture2d, sun_y: f32) -> ProgramBinder<'_> {     self.shader
-    //         .bind()
-    //         .with_uniform("matrix", matrix)
-    //         .with_uniform("tex", atlas)
-    //         .with_uniform("lightmap", lightmap)
-    //         .with_uniform("sun_position", [0.0, sun_y, 0.0])
-    //         .with_uniform("with_tex", true)
-    //         .with_uniform("with_fog", false)
-    // }
 
     pub fn render_buffer(
         &mut self,
@@ -609,7 +742,7 @@ impl ChunkRenderer {
             bytemuck::bytes_of(&VoxelImmediates {
                 chunk: IPoint3D::ZERO,
                 matrix,
-                _pad: [0; 1],
+                _pad: 0,
             }),
         );
 
@@ -670,7 +803,7 @@ impl ChunkRenderer {
             bytemuck::bytes_of(&VoxelImmediates {
                 chunk: IPoint3D::ZERO,
                 matrix,
-                _pad: [0; 1],
+                _pad: 0,
             }),
         );
 
@@ -695,7 +828,7 @@ impl ChunkRenderer {
             bytemuck::bytes_of(&VoxelImmediates {
                 chunk: IPoint3D::ZERO,
                 matrix,
-                _pad: [0; 1],
+                _pad: 0,
             }),
         );
 
@@ -714,6 +847,22 @@ impl ChunkRenderer {
 
                 render_info.draw_calls += 1;
             }
+        }
+
+        if self.cloud_indices_count > 0 {
+            render_pass.set_pipeline(&self.cloud_render_pipeline);
+            render_pass.set_immediates(
+                0,
+                bytemuck::bytes_of(&CloudImmediates {
+                    matrix,
+                    _pad: [0; 3],
+                    radii: 12.0,
+                }),
+            );
+
+            render_pass.set_vertex_buffer(0, self.cloud_buffer.slice(..));
+            render_pass.set_index_buffer(self.cloud_indices_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.cloud_indices_count as u32, 0, 0..1);
         }
 
         render_info

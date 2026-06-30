@@ -30,8 +30,6 @@ pub struct Texture {
 impl Texture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-    // 1.
-
     pub fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32, label: &str) -> Self {
         let size = wgpu::Extent3d {
             width,
@@ -52,21 +50,22 @@ impl Texture {
 
         let texture = device.create_texture(&desc);
 
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            compare: Some(wgpu::CompareFunction::LessEqual), // 5.
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 100.0,
-            ..Default::default()
-        });
-
-        Self { texture, view, sampler }
+        Self {
+            view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            texture,
+            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                compare: Some(wgpu::CompareFunction::LessEqual),
+                lod_min_clamp: 0.0,
+                lod_max_clamp: 100.0,
+                ..wgpu::SamplerDescriptor::default()
+            }),
+        }
     }
 }
 #[derive(Debug, Clone, Copy)]
@@ -205,7 +204,6 @@ pub struct ApplicationWindow<T: State> {
     depth_texture: Texture,
     last_time: Option<Instant>,
     vsync: bool,
-    refresh_rate: Duration,
 }
 
 pub struct Application<T: State> {
@@ -246,8 +244,6 @@ impl<T: State> ApplicationWindow<T> {
     #[must_use]
     #[allow(clippy::missing_panics_doc)]
     pub fn new(event_loop: &dyn ActiveEventLoop, args: T::Args) -> Self {
-        const FALLBACK_RATE: Duration = Duration::from_secs(1).checked_div(60).unwrap();
-
         let icon = T::ICON.and_then(|icon| {
             let decoder = png::Decoder::new(BufReader::new(File::open(icon).unwrap()));
             let mut reader = decoder.read_info().unwrap();
@@ -299,20 +295,8 @@ impl<T: State> ApplicationWindow<T> {
         let cap = surface.get_capabilities(&adapter);
         let format = cap.formats[0];
 
-        // let backend = RenderBackend::new(window.display_handle().unwrap(),
-        // window.window_handle().unwrap(), width, height).unwrap();
-        let refresh_rate = window
-            .current_monitor()
-            .and_then(|monitor| monitor.current_video_mode())
-            .and_then(|video_mode| video_mode.refresh_rate_millihertz())
-            .and_then(|refresh_rate| Duration::from_secs(1).checked_div(refresh_rate.get() / 1000))
-            .unwrap_or(FALLBACK_RATE);
         let vsync = Cell::new(false);
-
         let depth_texture = Texture::create_depth_texture(&device, width, height, "Mavelin Depth Texture");
-
-        // backend.set_vsync(false).unwrap();
-
         let state = T::new(
             WindowContext {
                 instance: &instance,
@@ -334,7 +318,6 @@ impl<T: State> ApplicationWindow<T> {
             window,
             last_time: None,
             vsync: vsync.get(),
-            refresh_rate,
             instance,
             device,
             queue,
@@ -360,9 +343,11 @@ impl<T: State> ApplicationWindow<T> {
             width,
             height,
             desired_maximum_frame_latency: 2,
-            present_mode: 
+            present_mode: if self.vsync {
+                wgpu::PresentMode::AutoVsync
+            } else {
                 wgpu::PresentMode::AutoNoVsync
-            ,
+            },
         });
     }
 }
@@ -472,12 +457,12 @@ impl<T: State> ApplicationHandler for Application<T> {
 
                 window.state.update(context, delta);
                 window.state.render(context, delta);
-                
+
                 let prev_vsync = window.vsync;
 
                 window.vsync = vsync.get();
 
-                if window.vsync != window.vsync {
+                if prev_vsync != window.vsync {
                     let (width, height) = window.window.surface_size().into();
 
                     window.configure_surface(width, height);
@@ -496,17 +481,7 @@ impl<T: State> ApplicationHandler for Application<T> {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
-        self.window.inspect_mut(|window| {
-            window.window.request_redraw();
-
-            // let frame_time = window.last_time.map_or(Duration::ZERO, |time| time.elapsed());
-
-            // if window.vsync && window.refresh_rate > frame_time {
-            //     let wait = window.refresh_rate.checked_sub(frame_time).unwrap();
-
-            //     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + wait));
-            // }
-        });
+    fn about_to_wait(&mut self, _: &dyn ActiveEventLoop) {
+        self.window.inspect_mut(|window| window.window.request_redraw());
     }
 }

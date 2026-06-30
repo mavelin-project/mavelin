@@ -6,6 +6,11 @@ mod thickness;
 
 pub use self::{box2d::Box2D, cube::Cube3D, rect::Rect, round_rect::RRect, thickness::Thickness};
 
+pub mod camera {
+    pub use glam::camera::rh::proj;
+    pub use glam::camera::rh::view;
+}
+
 pub type ISize2D = glam::IVec2;
 pub type ISize3D = glam::IVec3;
 pub type IPoint2D = glam::IVec2;
