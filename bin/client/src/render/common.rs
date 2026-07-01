@@ -180,16 +180,16 @@ impl CommonRenderer {
         });
 
         let vbo = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Common Render VBO"),
+            label: Some("Common Render: Vertices"),
             size: (Self::PREALLOCATE_VERTICES * size_of::<CommonVertex>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
             mapped_at_creation: false,
         });
 
         let ibo = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Common Render IBO"),
+            label: Some("Common Render: Indices"),
             size: (Self::PREALLOCATE_INDICES * size_of::<u32>()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
             mapped_at_creation: false,
         });
 
@@ -353,6 +353,7 @@ impl CommonRenderer {
         &self.fonts
     }
 
+    #[allow(dead_code)]
     pub const fn window_matrix(&self) -> glam::Mat4 {
         self.window_matrix
     }
@@ -664,8 +665,35 @@ impl CommonRenderer {
         let vertices = self.buffers.vertices.len();
         let indices = self.buffers.indices.len();
 
-        context.queue.write_buffer(&self.vbo, 0, bytemuck::cast_slice(&self.buffers.vertices));
-        context.queue.write_buffer(&self.ibo, 0, bytemuck::cast_slice(&self.buffers.indices));
+        {
+            self.vbo.slice(..).map_async(wgpu::MapMode::Write, |_| ());
+
+            context.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+
+            {
+                let data = bytemuck::cast_slice(&self.buffers.vertices);
+                let mut buffer = self.vbo.slice(..data.len() as wgpu::BufferAddress).get_mapped_range_mut().unwrap();
+
+                buffer.copy_from_slice(data);
+            }
+
+            self.vbo.unmap();
+        }
+
+        {
+            self.ibo.slice(..).map_async(wgpu::MapMode::Write, |_| ());
+
+            context.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+
+            {
+                let data = bytemuck::cast_slice(&self.buffers.indices);
+                let mut buffer = self.ibo.slice(..data.len() as wgpu::BufferAddress).get_mapped_range_mut().unwrap();
+
+                buffer.copy_from_slice(data);
+            }
+
+            self.ibo.unmap();
+        }
 
         self.buffers.clear();
 

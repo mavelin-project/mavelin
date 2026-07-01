@@ -246,7 +246,7 @@ impl<T: State> ApplicationWindow<T> {
                 max_immediate_size: 96,
                 ..wgpu::Limits::downlevel_defaults()
             },
-            required_features: wgpu::Features::IMMEDIATES,
+            required_features: wgpu::Features::IMMEDIATES | wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::MAPPABLE_PRIMARY_BUFFERS,
             ..wgpu::DeviceDescriptor::default()
         }))
         .unwrap();

@@ -17,16 +17,9 @@ struct VertexOutput {
 fn fog_spherical_distance(pos: vec3<f32>) -> f32 { return length(pos); }
 fn fog_cylindrical_distance(pos: vec3<f32>) -> f32 { return max(length(pos.xz), abs(pos.y)); }
 
-struct VoxelUniform {
-    camera_pos: vec3<f32>
-}
-
-@group(0) @binding(0)
-var<uniform> voxel: VoxelUniform;
-
 struct VoxelImm {
     matrix: mat4x4<f32>,
-    chunk: vec3<i32>,
+    chunk: vec3<f32>,
     sun_position: vec3<f32>
 }
 
@@ -305,7 +298,7 @@ fn vs_main(
     let light_intensity = min(max(block_light, sun_light), 1.0);
 
     let linear_color = vec4(COLOR_TO_LINEAR[in.color.r], COLOR_TO_LINEAR[in.color.g], COLOR_TO_LINEAR[in.color.b], COLOR_TO_LINEAR[in.color.a]);
-    let pos = vec3<f32>(voxel_imm.chunk) - voxel.camera_pos + in.position;
+    let pos = voxel_imm.chunk + in.position;
 
     out.position = voxel_imm.matrix * vec4(pos, 1.0);
     out.spherical_dist = fog_spherical_distance(out.position.xyz);
@@ -317,9 +310,9 @@ fn vs_main(
     return out;
 }
 
-@group(1) @binding(0) var tex: texture_2d<f32>;
-@group(1) @binding(1) var lightmap: texture_2d<f32>;
-@group(1) @binding(2) var base_sampler: sampler;
+@group(0) @binding(0) var tex: texture_2d<f32>;
+@group(0) @binding(1) var lightmap: texture_2d<f32>;
+@group(0) @binding(2) var base_sampler: sampler;
 
 struct FogUniform {
     fog_color: vec4<f32>,
@@ -330,7 +323,7 @@ struct FogUniform {
     with_fog: u32,
 }
 
-@group(2) @binding(0) var<uniform> fog: FogUniform;
+@group(1) @binding(0) var<uniform> fog: FogUniform;
 
 fn linear_value(dist: f32, start: f32, end: f32) -> f32 {
     if dist <= start { return 0.0; }

@@ -195,15 +195,15 @@ pub struct RenderBuffer {
 
 impl RenderBuffer {
     #[inline]
-    pub fn new<V: bytemuck::NoUninit>(device: &wgpu::Device, vertices: &[V], indices: &[u32]) -> Self {
+    pub fn new<V: bytemuck::NoUninit>(device: &wgpu::Device, vertices: &[V], v_label: &str, indices: &[u32], i_label: &str) -> Self {
         Self {
             vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Render Buffer: Vertices"),
+                label: Some(v_label),
                 contents: bytemuck::cast_slice(vertices),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             }),
             indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Render Buffer: Indices"),
+                label: Some(i_label),
                 contents: bytemuck::cast_slice(indices),
                 usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             }),
@@ -211,14 +211,22 @@ impl RenderBuffer {
         }
     }
 
-    // #[inline]
-    // pub fn new_dynamic(backend: &RenderBackend, vertices: &[V], shader: &Program,
-    // element_type: ElementType, indices: &[I]) -> Result<Self, Error> {
-    //     Ok(Self {
-    //         vertices: backend.create_vertex_buffer(vertices, shader, true)?,
-    //         indices: backend.create_index_buffer(element_type, indices, true)?,
-    //     })
-    // }
+    #[inline]
+    pub fn new_dynamic<V: bytemuck::NoUninit>(device: &wgpu::Device, vertices: &[V], v_label: &str, indices: &[u32], i_label: &str) -> Self {
+        Self {
+            vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(v_label),
+                contents: bytemuck::cast_slice(vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
+            }),
+            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(i_label),
+                contents: bytemuck::cast_slice(indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
+            }),
+            count: indices.len(),
+        }
+    }
 }
 
 pub struct RawRenderBuffer<V: bytemuck::NoUninit> {

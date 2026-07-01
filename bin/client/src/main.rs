@@ -4,7 +4,8 @@
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::unreadable_literal,
-    clippy::missing_panics_doc
+    clippy::missing_panics_doc,
+    unused_crate_dependencies
 )]
 
 mod blocks;
@@ -109,6 +110,7 @@ fn register_block<T: Block + 'static>(
 }
 
 impl GameLoop {
+    #[profiling::function]
     fn handle_shortcuts(&mut self, context: WindowContext) {
         if self.input.keyboard.is_key_pressed_once(KeyCode::F3) {
             self.settings.debugging.enabled = !self.settings.debugging.enabled;
@@ -389,6 +391,7 @@ impl State for GameLoop {
     }
 
     #[allow(clippy::too_many_lines, clippy::significant_drop_tightening)]
+    #[profiling::function]
     fn update(&mut self, context: WindowContext, delta: Duration) {
         self.handle_shortcuts(context);
 
@@ -430,9 +433,8 @@ impl State for GameLoop {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[profiling::function]
     fn render(&mut self, context: WindowContext, output: wgpu::SurfaceTexture, delta: Duration) {
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
         if self.settings.debugging.fps_stat.len() >= 100 {
             self.settings.debugging.fps_stat.pop_front();
         }
@@ -443,99 +445,143 @@ impl State for GameLoop {
         let info = self.settings.debugging.render_info.take();
 
         let (width, height) = context.window_size().into();
-        let mut encoder = context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Mavelin Command Encoder"),
-        });
 
         {
-            if let Some(world) = self.world.as_mut() {
-                world.render(
-                    &context,
-                    &view,
-                    &mut encoder,
-                    &mut self.common_renderer,
-                    glam::UVec2::new(width, height),
-                    &self.settings,
-                    info,
-                    delta,
-                );
-            } else {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Main Menu Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear({
-                                let [r, g, b, a]: [f32; 4] = Color::from_u32_rgb(0x1D211B).to_linear_rgba();
-                                let [r, g, b, a] = [f64::from(r), f64::from(g), f64::from(b), f64::from(a)];
+            profiling::scope!("GameLoop::render->encoder");
 
-                                wgpu::Color { r, g, b, a }
+            let mut encoder = context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Mavelin Command Encoder"),
+            });
+
+            {
+                let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+                profiling::scope!("GameLoop::render->world.render");
+
+                if let Some(world) = self.world.as_mut() {
+                    world.render(
+                        &context,
+                        &view,
+                        &mut encoder,
+                        &mut self.common_renderer,
+                        glam::UVec2::new(width, height),
+                        &self.settings,
+                        info,
+                        delta,
+                    );
+                } else {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Main Menu Pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            depth_slice: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear({
+                                    let [r, g, b, a]: [f32; 4] = Color::from_u32_rgb(0x1D211B).to_linear_rgba();
+                                    let [r, g, b, a] = [f64::from(r), f64::from(g), f64::from(b), f64::from(a)];
+
+                                    wgpu::Color { r, g, b, a }
+                                }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &context.depth_texture.view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
                             }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &context.depth_texture.view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
+                            stencil_ops: None,
                         }),
-                        stencil_ops: None,
-                    }),
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                    multiview_mask: None,
-                });
-                // pass.clear_color_and_depth(Color::from_u32_rgb(0x1D211B).as_value(), 1.0);
+                        occlusion_query_set: None,
+                        timestamp_writes: None,
+                        multiview_mask: None,
+                    });
+                    // pass.clear_color_and_depth(Color::from_u32_rgb(0x1D211B).as_value(), 1.0);
 
-                let mut root = self.context.root(&self.common_renderer, context.window_size().as_vec2());
+                    let mut root = self.context.root(&self.common_renderer, context.window_size().as_vec2());
 
-                if matches!(self.current_page, Page::Main) {
-                    match MainScreen.render(&mut root) {
-                        Some(MainScreenAction::StartGame) => {
-                            self.world.replace(apply_world_template(
-                                World::new(
-                                    &context,
-                                    &self.texture_atlas,
-                                    &self.lightmap_atlas,
-                                    self.resource_manager.clone(),
-                                    ChunkManager::new(world::ChunkFileCache {
-                                        root: PathBuf::from("./worlds/WRD128-0"),
-                                    }),
-                                    WorldType::Local,
-                                ),
-                                &self.resource_manager,
-                                context.window_size().as_vec2(),
-                            ));
+                    if matches!(self.current_page, Page::Main) {
+                        match MainScreen.render(&mut root) {
+                            Some(MainScreenAction::StartGame) => {
+                                self.world.replace(apply_world_template(
+                                    World::new(
+                                        &context,
+                                        &self.texture_atlas,
+                                        &self.lightmap_atlas,
+                                        self.resource_manager.clone(),
+                                        ChunkManager::new(world::ChunkFileCache {
+                                            root: PathBuf::from("./worlds/WRD128-0"),
+                                        }),
+                                        WorldType::Local,
+                                    ),
+                                    &self.resource_manager,
+                                    context.window_size().as_vec2(),
+                                ));
+                            }
+                            Some(MainScreenAction::CloseWindow) => context.close_window(),
+                            _ => (),
                         }
-                        Some(MainScreenAction::CloseWindow) => context.close_window(),
-                        _ => (),
                     }
+
+                    self.overlay.render(&mut root);
+
+                    drop(root);
+
+                    self.context.paint_root(&mut self.common_renderer, context.queue);
+
+                    _ = self.common_renderer.render(&mut pass, &context);
                 }
-
-                self.overlay.render(&mut root);
-
-                drop(root);
-
-                self.context.paint_root(&mut self.common_renderer, context.queue);
-
-                _ = self.common_renderer.render(&mut pass, &context);
             }
+
+            let buffer = encoder.finish();
+
+            context.queue.submit([buffer]);
+            context.pre_present_notify();
+            context.queue.present(output);
         }
 
         if self.settings.debugging.draw_calls_stat.len() >= 100 {
             self.settings.debugging.draw_calls_stat.pop_front();
         }
 
-        context.pre_present_notify();
-        context.queue.submit([encoder.finish()]);
-        context.queue.present(output);
+        // if let Some(world) = &mut self.world
+        //    && world.print_results
+        //{
+        //    world.print_results = false;
+        //    world.query_buffer.slice(..).map_async(wgpu::MapMode::Read, |_| ());
+        //
+        //    context.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        //
+        //    let [start, end] = {
+        //        let timestamp_view = world
+        //            .query_buffer
+        //            .slice(..(size_of::<u64>() as wgpu::BufferAddress * 2))
+        //            .get_mapped_range()
+        //            .unwrap();
+        //
+        //        let timestamps = bytemuck::cast_slice::<_, u64>(&timestamp_view);
+        //
+        //        [timestamps[0], timestamps[1]]
+        //    };
+        //
+        //    world.query_buffer.unmap();
+        //
+        //    let period = context.queue.get_timestamp_period();
+        //    let elapsed_us = |start, end: u64|
+        // Duration::from_nanos((end.wrapping_sub(start) as f64 * f64::from(period)) as
+        // u64);
+        //
+        //    println!("Elapsed time for world render pass: {:?}", elapsed_us(start,
+        // end));
+        //}
 
         self.settings.debugging.draw_calls_stat.push_back(info.draw_calls);
         self.settings.debugging.draw_calls_max = self.settings.debugging.draw_calls_max.max(info.draw_calls);
         self.settings.debugging.render_info = info;
+
+        profiling::finish_frame!();
     }
 }
 
@@ -632,6 +678,24 @@ fn main() {
             tracing_subscriber::filter::filter_fn(|metadata| !(metadata.target() == "cranelift_jit::backend" && metadata.level() == &tracing::Level::INFO)),
         ),
     ));
+
+    #[cfg(feature = "puffin-profiling")]
+    puffin::set_scopes_on(true);
+
+    #[cfg(feature = "puffin-profiling")]
+    match puffin_http::Server::new("127.0.0.1:8585") {
+        Ok(puffin_server) => {
+            tracing::info!("Run:  cargo install puffin_viewer && puffin_viewer --url 127.0.0.1:8585");
+
+            // We can store the server if we want, but in this case we just want
+            // it to keep running. Dropping it closes the server, so let's not drop it!
+            #[expect(clippy::mem_forget)]
+            std::mem::forget(puffin_server);
+        }
+        Err(err) => {
+            tracing::error!("Failed to start puffin server: {err}");
+        }
+    }
 
     Application::<GameLoop>::new(()).start().expect("failed to run app");
 }

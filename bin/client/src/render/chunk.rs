@@ -63,13 +63,13 @@ impl TranslucentSubchunk {
         Self::resort_faces(&mut faces, last_pos, origin);
 
         Self {
-            buffer: VoxelMeshBuilder::build_dynamic_from_slice(device, &faces),
+            buffer: VoxelMeshBuilder::build_dynamic_from_slice(device, &faces, "Translucent SubChunk: Vertices", "Translucent SubChunk: Indices"),
             faces,
             last_pos,
         }
     }
 
-    fn update(&mut self, queue: &wgpu::Queue, last_pos: glam::Vec3, origin: glam::IVec2) {
+    fn update(&mut self, device: &wgpu::Device, last_pos: glam::Vec3, origin: glam::IVec2) {
         if self.last_pos.distance_squared(last_pos) > 2.0 && !self.faces.is_empty() {
             Self::resort_faces(&mut self.faces, last_pos, origin);
 
@@ -77,8 +77,33 @@ impl TranslucentSubchunk {
 
             builder.extend_from_slice(&self.faces);
 
-            queue.write_buffer(&self.buffer.vertices, 0, bytemuck::cast_slice(&builder.vertices));
-            queue.write_buffer(&self.buffer.indices, 0, bytemuck::cast_slice(&builder.indices));
+            {
+                self.buffer.vertices.slice(..).map_async(wgpu::MapMode::Write, |_| ());
+
+                device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+
+                {
+                    let mut buffer = self.buffer.vertices.slice(..).get_mapped_range_mut().unwrap();
+
+                    buffer.copy_from_slice(bytemuck::cast_slice(&builder.vertices));
+                }
+
+                self.buffer.vertices.unmap();
+            }
+
+            {
+                self.buffer.indices.slice(..).map_async(wgpu::MapMode::Write, |_| ());
+
+                device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+
+                {
+                    let mut buffer = self.buffer.indices.slice(..).get_mapped_range_mut().unwrap();
+
+                    buffer.copy_from_slice(bytemuck::cast_slice(&builder.indices));
+                }
+
+                self.buffer.indices.unmap();
+            }
 
             self.last_pos = last_pos;
         }
@@ -123,21 +148,21 @@ impl VoxelMeshBuilder {
     }
 
     #[inline]
-    pub fn build_from_slice(device: &wgpu::Device, voxels: &[VoxelFace]) -> RenderBuffer {
+    pub fn build_from_slice(device: &wgpu::Device, voxels: &[VoxelFace], v_label: &str, i_label: &str) -> RenderBuffer {
         let mut this = Self::new();
 
         this.extend_from_slice(voxels);
 
-        this.build(device)
+        this.build(device, v_label, i_label)
     }
 
     #[inline]
-    pub fn build_dynamic_from_slice(device: &wgpu::Device, voxels: &[VoxelFace]) -> RenderBuffer {
+    pub fn build_dynamic_from_slice(device: &wgpu::Device, voxels: &[VoxelFace], v_label: &str, i_label: &str) -> RenderBuffer {
         let mut this = Self::new();
 
         this.extend_from_slice(voxels);
 
-        this.build_dynamic(device)
+        this.build_dynamic(device, v_label, i_label)
     }
 
     #[inline]
@@ -188,13 +213,14 @@ impl VoxelMeshBuilder {
         self,
         context: &WindowContext,
         render_pass: &mut wgpu::RenderPass,
-        renderer: &mut ChunkRenderer,
-        camera_pos: glam::Vec3,
+        renderer: &ChunkRenderer,
         matrix: glam::Mat4,
+        v_label: &str,
+        i_label: &str,
     ) -> RenderInfo {
-        let buffer = self.build(context.device);
+        let buffer = self.build(context.device, v_label, i_label);
 
-        renderer.render_buffer(context.queue, render_pass, &buffer, camera_pos, matrix, true)
+        renderer.render_buffer(render_pass, &buffer, matrix, true)
     }
 
     #[inline]
@@ -202,23 +228,24 @@ impl VoxelMeshBuilder {
         self,
         context: &WindowContext,
         render_pass: &mut wgpu::RenderPass,
-        renderer: &mut ChunkRenderer,
-        camera_pos: glam::Vec3,
+        renderer: &ChunkRenderer,
         matrix: glam::Mat4,
+        v_label: &str,
+        i_label: &str,
     ) -> RenderInfo {
-        let buffer = self.build(context.device);
+        let buffer = self.build(context.device, v_label, i_label);
 
-        renderer.render_buffer(context.queue, render_pass, &buffer, camera_pos, matrix, false)
+        renderer.render_buffer(render_pass, &buffer, matrix, false)
     }
 
     #[inline]
-    pub fn build(self, device: &wgpu::Device) -> RenderBuffer {
-        RenderBuffer::new(device, &self.vertices, &self.indices)
+    pub fn build(self, device: &wgpu::Device, v_label: &str, i_label: &str) -> RenderBuffer {
+        RenderBuffer::new(device, &self.vertices, v_label, &self.indices, i_label)
     }
 
     #[inline]
-    pub fn build_dynamic(self, device: &wgpu::Device) -> RenderBuffer {
-        RenderBuffer::new(device, &self.vertices, &self.indices)
+    pub fn build_dynamic(self, device: &wgpu::Device, v_label: &str, i_label: &str) -> RenderBuffer {
+        RenderBuffer::new_dynamic(device, &self.vertices, v_label, &self.indices, i_label)
     }
 }
 
@@ -227,10 +254,6 @@ pub struct ChunkRenderer {
     translucent_render_pipeline: wgpu::RenderPipeline,
     cloud_render_pipeline: wgpu::RenderPipeline,
     fog_bind_group: wgpu::BindGroup,
-
-    voxel_bind_group: wgpu::BindGroup,
-    voxel: VoxelUniform,
-    voxel_buffer: wgpu::Buffer,
 
     fragment_bind_group: wgpu::BindGroup,
     fog: FogUniform,
@@ -242,6 +265,7 @@ pub struct ChunkRenderer {
 
     subchunks: IndexMap<(glam::IVec2, usize), RenderSubchunk>,
     last_position: glam::IVec3,
+    sun_position: f32,
     fog_color: Color,
 }
 
@@ -259,18 +283,10 @@ struct FogUniform {
 
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
-struct VoxelUniform {
-    camera_pos: glam::Vec3,
-    sun_position: glam::Vec3,
-    _pad: [u32; 2],
-}
-
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
 struct VoxelImmediates {
     matrix: glam::Mat4,
-    chunk: glam::IVec3,
-    sun_position: glam::Vec3,
+    chunk: [f32; 3],
+    sun_position: [f32; 3],
     _pad: [u32; 2],
 }
 
@@ -311,13 +327,6 @@ impl ChunkRenderer {
             ..Default::default()
         });
 
-        let voxel_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Voxel Buffer"),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            size: size_of::<VoxelUniform>() as u64,
-            mapped_at_creation: false,
-        });
-
         let fog = FogUniform {
             enabled: 1,
             fog_color: [0.0; 4],
@@ -346,29 +355,6 @@ impl ChunkRenderer {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             size: (size_of::<u32>() * 6 * 128) as u64,
             mapped_at_creation: false,
-        });
-
-        let voxel_bind_group_layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-            label: Some("Chunk Renderer Bind Group Layout"),
-        });
-
-        let voxel_bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &voxel_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: voxel_buffer.as_entire_binding(),
-            }],
-            label: Some("Chunk Renderer Bind Group"),
         });
 
         let fog_bind_group_layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -447,7 +433,7 @@ impl ChunkRenderer {
 
         let render_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Chunk Renderer Pipeline Layout"),
-            bind_group_layouts: &[Some(&voxel_bind_group_layout), Some(&fragment_bind_group_layout), Some(&fog_bind_group_layout)],
+            bind_group_layouts: &[Some(&fragment_bind_group_layout), Some(&fog_bind_group_layout)],
             immediate_size: size_of::<VoxelImmediates>() as u32,
         });
 
@@ -608,15 +594,8 @@ impl ChunkRenderer {
             solid_render_pipeline,
             translucent_render_pipeline,
             cloud_render_pipeline,
-            voxel_bind_group,
             fragment_bind_group,
             fog_bind_group,
-            voxel: VoxelUniform {
-                camera_pos: glam::Vec3::ZERO,
-                sun_position: glam::Vec3::ZERO,
-                _pad: [0; 2],
-            },
-            voxel_buffer,
             fog,
             fog_buffer,
             cloud_buffer,
@@ -625,6 +604,7 @@ impl ChunkRenderer {
             subchunks: IndexMap::new(),
             last_position: glam::IVec3::ZERO,
             fog_color: Color::BLACK,
+            sun_position: 0.0,
         }
     }
 
@@ -676,13 +656,8 @@ impl ChunkRenderer {
     }
 
     #[inline]
-    pub const fn set_camera_pos(&mut self, camera_pos: glam::Vec3) {
-        self.voxel.camera_pos = camera_pos;
-    }
-
-    #[inline]
     pub const fn set_sun_position(&mut self, value: f32) {
-        self.voxel.sun_position.y = value;
+        self.sun_position = value;
     }
 
     #[inline]
@@ -693,11 +668,6 @@ impl ChunkRenderer {
 
             queue.write_buffer(&self.fog_buffer, 0, bytemuck::bytes_of(&self.fog));
         }
-    }
-
-    #[inline]
-    pub fn update_uniforms(&self, queue: &wgpu::Queue) {
-        queue.write_buffer(&self.voxel_buffer, 0, bytemuck::bytes_of(&self.voxel));
     }
 
     #[inline]
@@ -719,34 +689,20 @@ impl ChunkRenderer {
         self.subchunks.contains_key(k)
     }
 
-    pub fn render_buffer(
-        &self,
-        queue: &wgpu::Queue,
-        render_pass: &mut wgpu::RenderPass,
-        buffer: &RenderBuffer,
-        camera_pos: glam::Vec3,
-        matrix: glam::Mat4,
-        full_bright: bool,
-    ) -> RenderInfo {
-        self.update_uniforms(queue);
-
+    #[profiling::function]
+    pub fn render_buffer(&self, render_pass: &mut wgpu::RenderPass, buffer: &RenderBuffer, matrix: glam::Mat4, full_bright: bool) -> RenderInfo {
         render_pass.set_pipeline(&self.solid_render_pipeline);
-        render_pass.set_bind_group(0, &self.voxel_bind_group, &[]);
-        render_pass.set_bind_group(1, &self.fragment_bind_group, &[]);
-        render_pass.set_bind_group(2, &self.fog_bind_group, &[]);
+        render_pass.set_bind_group(0, &self.fragment_bind_group, &[]);
+        render_pass.set_bind_group(1, &self.fog_bind_group, &[]);
         render_pass.set_vertex_buffer(0, buffer.vertices.slice(..));
         render_pass.set_index_buffer(buffer.indices.slice(..), wgpu::IndexFormat::Uint32);
         render_pass.insert_debug_marker("render_buffer");
         render_pass.set_immediates(
             0,
             bytemuck::bytes_of(&VoxelImmediates {
-                chunk: glam::IVec3::ZERO,
-                matrix: matrix * glam::Mat4::from_translation(camera_pos.fract()),
-                sun_position: self.voxel.sun_position.with_y(if full_bright {
-                    const { (1.0 - 0.5) / 0.96 }
-                } else {
-                    self.voxel.sun_position.y
-                }),
+                chunk: [0.0; 3],
+                matrix,
+                sun_position: [0.0, if full_bright { const { (1.0 - 0.5) / 0.96 } } else { self.sun_position }, 0.0],
                 _pad: [0; 2],
             }),
         );
@@ -759,6 +715,7 @@ impl ChunkRenderer {
         }
     }
 
+    #[profiling::function]
     pub fn filter_by_shape(&mut self, center: glam::IVec2, shape: RenderShape) -> impl Iterator<Item = glam::IVec2> {
         self.subchunks
             .extract_if(.., move |&(origin, _), _| !shape.test(center, origin))
@@ -766,19 +723,16 @@ impl ChunkRenderer {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[profiling::function]
     pub fn render<T: Frustum>(
         &mut self,
-        queue: &wgpu::Queue,
+        device: &wgpu::Device,
         render_pass: &mut wgpu::RenderPass,
         camera_pos: glam::Vec3,
         frustum: &T,
         matrix: glam::Mat4,
     ) -> RenderInfo {
         let pos = camera_pos.as_ivec3();
-        let camera_offset = camera_pos.fract();
-
-        self.set_camera_pos(camera_offset);
-        self.update_uniforms(queue);
 
         if self.last_position == glam::IVec3::ZERO || self.last_position.distance_squared(pos) > 4 {
             self.subchunks.sort_unstable_by(|&a, _, &b, _| {
@@ -800,15 +754,14 @@ impl ChunkRenderer {
         let mut render_info = RenderInfo::default();
 
         render_pass.set_pipeline(&self.solid_render_pipeline);
-        render_pass.set_bind_group(0, &self.voxel_bind_group, &[]);
-        render_pass.set_bind_group(1, &self.fragment_bind_group, &[]);
-        render_pass.set_bind_group(2, &self.fog_bind_group, &[]);
+        render_pass.set_bind_group(0, &self.fragment_bind_group, &[]);
+        render_pass.set_bind_group(1, &self.fog_bind_group, &[]);
         render_pass.set_immediates(
             0,
             bytemuck::bytes_of(&VoxelImmediates {
-                chunk: glam::IVec3::ZERO,
+                chunk: [0.0; 3],
                 matrix,
-                sun_position: self.voxel.sun_position,
+                sun_position: [0.0, self.sun_position, 0.0],
                 _pad: [0; 2],
             }),
         );
@@ -816,7 +769,7 @@ impl ChunkRenderer {
         for (&key, subchunk) in &self.subchunks {
             if Self::is_subchunk_visible(frustum, key) && subchunk.solid.count > 0 {
                 let chunk_origin = glam::IVec3::new(key.0.x, 0, key.0.y) * SUBCHUNK_SIZE_I32;
-                let chunk_offset = chunk_origin - pos;
+                let chunk_offset = chunk_origin.as_vec3() - camera_pos;
 
                 render_pass.set_immediates(64, bytemuck::bytes_of(&chunk_offset.to_array()));
                 render_pass.set_vertex_buffer(0, subchunk.solid.vertices.slice(..));
@@ -831,9 +784,9 @@ impl ChunkRenderer {
         render_pass.set_immediates(
             0,
             bytemuck::bytes_of(&VoxelImmediates {
-                chunk: glam::IVec3::ZERO,
+                chunk: [0.0; 3],
                 matrix,
-                sun_position: self.voxel.sun_position,
+                sun_position: [0.0, self.sun_position, 0.0],
                 _pad: [0; 2],
             }),
         );
@@ -841,11 +794,11 @@ impl ChunkRenderer {
         for (&key, subchunk) in self.subchunks.iter_mut().rev() {
             if Self::is_subchunk_visible(frustum, key) && subchunk.translucent.buffer.count > 0 {
                 let chunk_origin = glam::IVec3::new(key.0.x, 0, key.0.y) * SUBCHUNK_SIZE_I32;
-                let chunk_offset = chunk_origin - pos;
+                let chunk_offset = chunk_origin.as_vec3() - camera_pos;
 
                 render_pass.set_immediates(64, bytemuck::bytes_of(&chunk_offset.to_array()));
 
-                subchunk.translucent.update(queue, camera_pos, key.0);
+                subchunk.translucent.update(device, camera_pos, key.0);
 
                 render_pass.set_vertex_buffer(0, subchunk.translucent.buffer.vertices.slice(..));
                 render_pass.set_index_buffer(subchunk.translucent.buffer.indices.slice(..), wgpu::IndexFormat::Uint32);

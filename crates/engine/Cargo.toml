@@ -7,7 +7,7 @@ edition = "2024"
 mavelin-shared.workspace = true
 winit = { git = "https://github.com/rust-windowing/winit.git" }
 png = "0.18.1"
-wgpu = { version = "29.0.0", git = "https://github.com/mavelin-project/wgpu.git", branch = "glutin" }
+wgpu.workspace = true
 pollster = "0.4.0"
 glam.workspace = true
 

@@ -7,7 +7,7 @@ use std::{
 };
 
 use ahash::{HashMap, HashSet};
-use mavelin_engine::{MouseButton, WindowContext};
+use mavelin_engine::{KeyCode, MouseButton, WindowContext};
 #[cfg(feature = "multiplayer")]
 use mavelin_network::{IncomingPacket, OutgoingPacket, Uuid};
 use mavelin_physics::{Aabb, PhysicsBody, PhysicsContext};
@@ -463,6 +463,11 @@ pub struct World {
     pub tick_interval: Interval,
     pub physics_interval: Interval,
 
+    query_set: wgpu::QuerySet,
+    resolve_query_buffer: wgpu::Buffer,
+    pub query_buffer: wgpu::Buffer,
+    pub print_results: bool,
+
     pub camera: Camera,
     pub player: Player,
     pub inventory_slot: Ranged<u8>,
@@ -509,7 +514,31 @@ impl World {
             fog: Tween::new(fog, fog, 1000),
         };
 
+        let query_set = context.device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("World Timestamp Query Set"),
+            count: 2,
+            ty: wgpu::QueryType::Timestamp,
+        });
+
+        let resolve_query_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("World Resolve Query Buffer"),
+            size: size_of::<u64>() as u64 * 2,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::QUERY_RESOLVE,
+            mapped_at_creation: false,
+        });
+
+        let query_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("World Query Buffer"),
+            size: size_of::<u64>() as u64 * 2,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
         Self {
+            query_set,
+            resolve_query_buffer,
+            query_buffer,
+            print_results: false,
             camera: Camera::new(player.camera_position()),
             chunk_renderer: ChunkRenderer::new(context, texture, lightmap),
             tick_interval: Interval::new(TICK_RATE),
@@ -674,6 +703,7 @@ impl World {
         }));
     }
 
+    #[profiling::function]
     pub fn physics_step(&mut self, input: &Input) {
         let provider = AabbProvider {
             chunk_manager: &self.chunk_manager,
@@ -726,7 +756,8 @@ impl World {
         }
     }
 
-    pub const fn tick(&mut self) {
+    #[profiling::function]
+    pub fn tick(&mut self) {
         self.clock.tick();
 
         #[cfg(feature = "multiplayer")]
@@ -768,11 +799,16 @@ impl World {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[profiling::function]
     pub fn update(&mut self, context: &WindowContext, settings: GraphicsSettings, input: &Input, delta: Duration) {
         self.colors.sky.advance(delta);
         self.colors.fog.advance(delta);
 
         self.player.handle_keyboard(input);
+
+        if input.keyboard.is_key_pressed(KeyCode::KeyI) {
+            self.print_results = true;
+        }
 
         if self.clock.active() {
             for _ in 0..self.physics_interval.update(delta) {
@@ -808,10 +844,14 @@ impl World {
         for result in self.job_manager.receiver.try_iter() {
             match result {
                 JobResult::Generation { chunk } => {
+                    profiling::scope!("World::update->JobResult::Generation:", &chunk.origin.to_string());
+
                     self.job_manager.jobs.remove(&chunk.origin);
                     self.chunk_manager.push(chunk, ChunkStage::Bare);
                 }
                 JobResult::Population { chunk, neighbours } => {
+                    profiling::scope!("World::update->JobResult::Population:", &chunk.origin.to_string());
+
                     self.job_manager.jobs.remove(&chunk.origin);
                     self.chunk_manager.replace(chunk, ChunkStage::Populated);
 
@@ -822,6 +862,8 @@ impl World {
                     }
                 }
                 JobResult::Lighting { chunk, neighbours } => {
+                    profiling::scope!("World::update->JobResult::Lighting:", &chunk.origin.to_string());
+
                     self.job_manager.jobs.remove(&chunk.origin);
                     self.chunk_manager.replace(chunk, ChunkStage::Lighted);
 
@@ -839,13 +881,15 @@ impl World {
                     }
                 }
                 JobResult::Meshing { origin, mesh } => {
+                    profiling::scope!("World::update->JobResult::Meshing:", &origin.to_string());
+
                     self.job_manager.jobs.remove(&origin);
 
                     self.chunk_manager.set_stage(origin, ChunkStage::Meshed);
 
                     for (subchunk_idx, mesh) in mesh.into_iter().rev().enumerate() {
                         let (solid, translucent) = mesh.into();
-                        let solid = VoxelMeshBuilder::build_from_slice(context.device, &solid);
+                        let solid = VoxelMeshBuilder::build_from_slice(context.device, &solid, "Solid SubChunk: Vertices", "Solid SubChunk: Indices");
                         let translucent = TranslucentSubchunk::new(context.device, translucent, self.player.camera_position(), origin);
 
                         self.chunk_renderer.set_subchunk((origin, subchunk_idx), solid, translucent);
@@ -868,6 +912,8 @@ impl World {
             if !self.job_manager.jobs.is_empty() {
                 return;
             }
+
+            profiling::scope!("World::update->STAGE_QUEUE");
 
             for origin in settings.render_shape.enlarge(1).iter_from_center(player_origin) {
                 match self.chunk_manager.stages.get(&origin) {
@@ -961,6 +1007,7 @@ impl World {
     }
 
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    #[profiling::function]
     pub fn render(
         &mut self,
         context: &WindowContext,
@@ -982,126 +1029,145 @@ impl World {
         let sky_color = self.colors.sky.get_copy();
         let fog_color = self.colors.fog.get_copy();
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Main Menu Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear({
-                        let [r, g, b, a]: [f32; 4] = sky_color.to_linear_rgba();
-                        let [r, g, b, a] = [f64::from(r), f64::from(g), f64::from(b), f64::from(a)];
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Main Menu Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear({
+                            let [r, g, b, a]: [f32; 4] = sky_color.to_linear_rgba();
+                            let [r, g, b, a] = [f64::from(r), f64::from(g), f64::from(b), f64::from(a)];
 
-                        wgpu::Color { r, g, b, a }
+                            wgpu::Color { r, g, b, a }
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &context.depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
                     }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &context.depth_texture.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
+                    stencil_ops: None,
                 }),
-                stencil_ops: None,
-            }),
-            occlusion_query_set: None,
-            timestamp_writes: None,
-            multiview_mask: None,
-        });
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
 
-        let pass = &mut pass;
+            let pass = &mut pass;
 
-        self.chunk_renderer.set_fog_color(context.queue, fog_color);
+            self.chunk_renderer.set_fog_color(context.queue, fog_color);
 
-        let rendered_subchunks = self
-            .chunk_renderer
-            .render(context.queue, pass, self.camera.position, &self.camera.frustum, self.camera.matrix());
+            let rendered_subchunks = self
+                .chunk_renderer
+                .render(context.device, pass, self.camera.position, &self.camera.frustum, self.camera.matrix());
 
-        let mut builder = VoxelMeshBuilder::with_capacity(self.entities.len());
+            /*let mut builder = VoxelMeshBuilder::with_capacity(self.entities.len());
 
-        for (_, entity) in &self.entities {
-            entity.render_to(&mut builder, &self.chunk_manager, self.resource_storage.as_ref());
-        }
+            for (_, entity) in &self.entities {
+                entity.render_to(&mut builder, &self.chunk_manager, self.resource_storage.as_ref());
+            }
 
-        builder.render(context, pass, &mut self.chunk_renderer, self.camera.position, self.camera.world_matrix());
+            builder.render(
+                context,
+                pass,
+                &self.chunk_renderer,
+                self.camera.world_matrix(),
+                "Entity Buffer: Vertices",
+                "Entity Buffer: Indices",
+            );*/
 
-        // self.kawase.apply(backend, &self.scene).unwrap();
+            // self.kawase.apply(backend, &self.scene).unwrap();
 
-        // self.scene.render(&mut frame).unwrap();
-        // self.particles.render(&mut frame, self.camera.matrix()).unwrap();
+            // self.scene.render(&mut frame).unwrap();
+            // self.particles.render(&mut frame, self.camera.matrix()).unwrap();
 
-        if self.is_underwater(self.player.camera_position()) {
-            common_renderer.draw_rect(glam::Vec2::ZERO, surface_size.as_vec2(), Color::from_hsl(215.0, 1.0, 0.6).with_alpha(0.5));
-        }
+            if self.is_underwater(self.player.camera_position()) {
+                common_renderer.draw_rect(glam::Vec2::ZERO, surface_size.as_vec2(), Color::from_hsl(215.0, 1.0, 0.6).with_alpha(0.5));
+            }
 
-        self.render_hotbar(context, common_renderer, surface_size);
+            self.render_hotbar(context, common_renderer, surface_size);
 
-        if settings.debugging.enabled {
-            self.render_debug_text(common_renderer, context, settings.graphics, rendered_subchunks.draw_calls, surface_size);
-            self.render_chunk_map(context.queue, common_renderer, surface_size);
+            if settings.debugging.enabled {
+                self.render_debug_text(common_renderer, context, settings.graphics, rendered_subchunks.draw_calls, surface_size);
+                self.render_chunk_map(context.queue, common_renderer, surface_size);
 
-            Self::render_fps_stat(context.queue, common_renderer, &settings.debugging, delta, surface_size);
-            Self::render_draw_calls_stat(context.queue, common_renderer, &settings.debugging, info, surface_size);
-        } else {
-            common_renderer.draw_text(
-                context.queue,
-                glam::Vec2::new(8.0, 4.0),
-                "default",
-                "Press F3 to view debug information.",
-                Color::WHITE,
-                18.0,
-                None,
-            );
-        }
+                Self::render_fps_stat(context.queue, common_renderer, &settings.debugging, delta, surface_size);
+                Self::render_draw_calls_stat(context.queue, common_renderer, &settings.debugging, info, surface_size);
+            } else {
+                common_renderer.draw_text(
+                    context.queue,
+                    glam::Vec2::new(8.0, 4.0),
+                    "default",
+                    "Press F3 to view debug information.",
+                    Color::WHITE,
+                    18.0,
+                    None,
+                );
+            }
 
-        common_renderer.render(pass, context);
+            common_renderer.render(pass, context);
 
-        let mut builder = VoxelMeshBuilder::with_capacity(self.player.inventory.get_hotbar_items().count());
+            /*let mut builder = VoxelMeshBuilder::with_capacity(self.player.inventory.get_hotbar_items().count());
 
-        let matrix = glam::Mat4::from_rotation_x(const { 200f32.to_radians() })
-            * glam::Mat4::from_rotation_y(const { 35f32.to_radians() })
-            * glam::Mat4::from_rotation_z(0.0);
+            let matrix = glam::Mat4::from_rotation_x(const { 200f32.to_radians() })
+                * glam::Mat4::from_rotation_y(const { 35f32.to_radians() })
+                * glam::Mat4::from_rotation_z(0.0);
 
-        for (i, item) in self.player.inventory.get_hotbar_items() {
-            const INVENTORY_HOTBAR_SLOTS: u8 = 8;
-            const SLOT_SIZE: f32 = 48f32;
-            const SIZE: f32 = SLOT_SIZE * 0.6;
-            const ORIGIN: glam::Vec3 = glam::Vec3::new(SIZE / 2.0, SIZE / 2.0, SIZE / 2.0);
-            const HOTBAR_WIDTH: f32 = (INVENTORY_HOTBAR_SLOTS + 1) as f32 * SLOT_SIZE;
+            for (i, item) in self.player.inventory.get_hotbar_items() {
+                const INVENTORY_HOTBAR_SLOTS: u8 = 8;
+                const SLOT_SIZE: f32 = 48f32;
+                const SIZE: f32 = SLOT_SIZE * 0.6;
+                const ORIGIN: glam::Vec3 = glam::Vec3::new(SIZE / 2.0, SIZE / 2.0, SIZE / 2.0);
+                const HOTBAR_WIDTH: f32 = (INVENTORY_HOTBAR_SLOTS + 1) as f32 * SLOT_SIZE;
 
-            let model = self
-                .resource_storage
-                .models
-                .get_unchecked(self.resource_storage.blocks.get_model_by_name(item.id));
+                let model = self
+                    .resource_storage
+                    .models
+                    .get_unchecked(self.resource_storage.blocks.get_model_by_name(item.id));
 
-            let size = surface_size.as_vec2();
-            let origin = glam::Vec2::new(
-                (size.x / 2.0) - (HOTBAR_WIDTH / 2.0) + ((SLOT_SIZE - SIZE) / 2.0),
-                size.y - SLOT_SIZE - 8.0 + ((SLOT_SIZE - SIZE) / 2.0),
-            );
+                let size = surface_size.as_vec2();
+                let origin = glam::Vec2::new(
+                    (size.x / 2.0) - (HOTBAR_WIDTH / 2.0) + ((SLOT_SIZE - SIZE) / 2.0),
+                    size.y - SLOT_SIZE - 8.0 + ((SLOT_SIZE - SIZE) / 2.0),
+                );
 
-            let slot_offset = (origin + glam::Vec2::new(i as f32 * SLOT_SIZE, 0.0)).extend(20.0);
+                let slot_offset = (origin + glam::Vec2::new(i as f32 * SLOT_SIZE, 0.0)).extend(20.0);
 
-            for element in &model.elements {
-                for model_face in &element.faces {
-                    builder.push_transformed(
-                        &VoxelFace {
-                            position: slot_offset,
-                            vertices: model_face.face_data.vertices.map(|vertex| vertex * SIZE),
-                            lights: [240; 4],
-                            uvs: model_face.face_data.uvs,
-                            color: if model_face.tint { GRASS_COLOR } else { Color::WHITE }.multiply_rgb(model_face.face_data.face.get_light_level()),
-                        },
-                        &matrix,
-                        ORIGIN,
-                    );
+                for element in &model.elements {
+                    for model_face in &element.faces {
+                        builder.push_transformed(
+                            &VoxelFace {
+                                position: slot_offset,
+                                vertices: model_face.face_data.vertices.map(|vertex| vertex * SIZE),
+                                lights: [240; 4],
+                                uvs: model_face.face_data.uvs,
+                                color: if model_face.tint { GRASS_COLOR } else { Color::WHITE }.multiply_rgb(model_face.face_data.face.get_light_level()),
+                            },
+                            &matrix,
+                            ORIGIN,
+                        );
+                    }
                 }
             }
+
+            builder.render_full_bright(
+                context,
+                pass,
+                &self.chunk_renderer,
+                common_renderer.window_matrix(),
+                "Hotbar Buffer: Vertices",
+                "Hotbar Buffer: Indices",
+            );*/
         }
 
-        builder.render_full_bright(context, pass, &mut self.chunk_renderer, self.camera.position, common_renderer.window_matrix());
+        encoder.resolve_query_set(&self.query_set, 0..2, &self.resolve_query_buffer, 0);
+        encoder.copy_buffer_to_buffer(&self.resolve_query_buffer, 0, &self.query_buffer, 0, self.query_buffer.size());
     }
 
     #[inline]
@@ -1111,6 +1177,7 @@ impl World {
             .is_some_and(|block| block.id == self.resource_storage.get_block_id("game:water"))
     }
 
+    #[profiling::function]
     fn render_chunk_map(&self, queue: &wgpu::Queue, context: &mut CommonRenderer, surface_size: glam::UVec2) {
         const CHUNK_UI_CONTAINER_SIZE: glam::Vec2 = glam::Vec2::new(128.0, 128.0);
         const CHUNK_UI_COUNT: usize = 16;
@@ -1209,6 +1276,7 @@ impl World {
         );
     }
 
+    #[profiling::function]
     fn render_debug_text(
         &self,
         context: &mut CommonRenderer,
@@ -1291,6 +1359,7 @@ Rendered subchunks: {rendered_subchunks} / {total_subchunks} ({total_chunks} tot
         context.draw_text(backend.queue, glam::Vec2::new(8.0, 4.0), "default", text, Color::WHITE, 18.0, None);
     }
 
+    #[profiling::function]
     fn render_hotbar(&self, backend: &WindowContext, context: &mut CommonRenderer, surface_size: glam::UVec2) {
         const INVENTORY_HOTBAR_SLOTS: u8 = 8;
         const SLOT_SIZE: f32 = 48f32;
@@ -1338,6 +1407,7 @@ Rendered subchunks: {rendered_subchunks} / {total_subchunks} ({total_chunks} tot
         }
     }
 
+    #[profiling::function]
     fn render_draw_calls_stat(queue: &wgpu::Queue, context: &mut CommonRenderer, debugging: &Debugging, info: RenderInfo, surface_size: glam::UVec2) {
         const SPACING: f32 = 1.0;
         const SIZE: glam::Vec2 = glam::Vec2::new(100.0 * (2.0 + SPACING), 96.0);
@@ -1383,6 +1453,7 @@ Rendered subchunks: {rendered_subchunks} / {total_subchunks} ({total_chunks} tot
         );
     }
 
+    #[profiling::function]
     fn render_fps_stat(queue: &wgpu::Queue, context: &mut CommonRenderer, debugging: &Debugging, delta: Duration, surface_size: glam::UVec2) {
         const SPACING: f32 = 1.0;
         const SIZE: glam::Vec2 = glam::Vec2::new(100.0 * (2.0 + SPACING), 96.0);
